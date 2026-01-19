@@ -1,0 +1,14 @@
+{
+  "name": "lecture-feedback",
+  "private": true,
+  "scripts": {
+    "dev": "pnpm --parallel --filter './apps/*' dev",
+    "build": "pnpm -r build",
+    "db:push": "pnpm --filter @lecture-feedback/api db:push",
+    "db:seed": "pnpm --filter @lecture-feedback/api db:seed",
+    "db:studio": "pnpm --filter @lecture-feedback/api db:studio"
+  },
+  "devDependencies": {
+    "typescript": "^5.4.5"
+  }
+}
