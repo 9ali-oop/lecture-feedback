@@ -1,0 +1,35 @@
+{
+  "name": "@lecture-feedback/api",
+  "version": "0.0.1",
+  "type": "module",
+  "scripts": {
+    "dev": "sh -c 'set -a; . ./.env; set +a; exec tsx watch src/index.ts'",
+    "build": "tsc",
+    "db:push": "sh -c 'set -a; . ./.env; set +a; exec drizzle-kit push'",
+    "db:seed": "sh -c 'set -a; . ./.env; set +a; exec tsx src/db/seed.ts'",
+    "db:studio": "drizzle-kit studio"
+  },
+  "dependencies": {
+    "@hono/node-server": "^1.13.7",
+    "@hono/node-ws": "^1.0.4",
+    "@hono/zod-validator": "^0.4.3",
+    "@lecture-feedback/shared": "workspace:*",
+    "dotenv": "^17.3.1",
+    "drizzle-orm": "^0.41.0",
+    "hono": "^4.7.7",
+    "jose": "^5.10.0",
+    "otpauth": "^9.3.6",
+    "pdf-lib": "^1.17.1",
+    "pg": "^8.13.3",
+    "qrcode": "^1.5.4",
+    "zod": "^3.24.2"
+  },
+  "devDependencies": {
+    "@types/node": "^22.14.0",
+    "@types/pg": "^8.11.13",
+    "@types/qrcode": "^1.5.5",
+    "drizzle-kit": "^0.30.6",
+    "tsx": "^4.19.3",
+    "typescript": "^5.4.5"
+  }
+}
