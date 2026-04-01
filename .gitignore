@@ -4,4 +4,3 @@ dist
 *.local
 uploads/
 .DS_Store
-.superpowers/
