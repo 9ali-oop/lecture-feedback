@@ -2,11 +2,9 @@ import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import Layout from '../../components/Layout.tsx';
 import { api } from '../../lib/api.ts';
-import { useAuth } from '../../contexts/AuthContext.tsx';
 import type { Module, Session } from '@lecture-feedback/shared';
 
 export default function StudentDashboard() {
-  const { user } = useAuth();
   const navigate = useNavigate();
   const [modules, setModules] = useState<(Module & { enrolled?: boolean })[]>([]);
   const [liveSessions, setLiveSessions] = useState<Session[]>([]);
@@ -14,10 +12,6 @@ export default function StudentDashboard() {
   const [tab, setTab] = useState<'enrolled' | 'browse'>('enrolled');
 
   useEffect(() => {
-    if (!user || user.role !== 'student') {
-      navigate('/login');
-      return;
-    }
     api.listModules().then(async (mods) => {
       setModules(mods);
       // Find any live sessions across enrolled modules
@@ -27,7 +21,7 @@ export default function StudentDashboard() {
       setLiveSessions(live);
       setLoading(false);
     });
-  }, [user, navigate]);
+  }, []);
 
   async function handleEnroll(moduleId: string) {
     await api.enrollModule(moduleId);

@@ -16,12 +16,8 @@ export default function LecturerDashboard() {
   const [submitting, setSubmitting] = useState(false);
 
   useEffect(() => {
-    if (!user || (user.role !== 'lecturer' && user.role !== 'admin')) {
-      navigate('/login');
-      return;
-    }
     api.listModules().then((m) => { setModules(m); setLoading(false); });
-  }, [user, navigate]);
+  }, []);
 
   async function handleCreate(e: React.FormEvent) {
     e.preventDefault();

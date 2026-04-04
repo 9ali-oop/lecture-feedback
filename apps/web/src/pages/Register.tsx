@@ -1,7 +1,13 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { api } from '../lib/api.ts';
 import { useAuth } from '../contexts/AuthContext.tsx';
+
+function roleHome(role: string) {
+  if (role === 'admin') return '/admin';
+  if (role === 'lecturer') return '/lecturer';
+  return '/student';
+}
 
 /**
  * First-time account activation: user enters email + first TOTP code.
@@ -10,11 +16,18 @@ import { useAuth } from '../contexts/AuthContext.tsx';
  */
 export default function Register() {
   const navigate = useNavigate();
-  const { login } = useAuth();
+  const { login, user, loading: authLoading } = useAuth();
   const [email, setEmail] = useState('');
   const [code, setCode] = useState('');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
+
+  // If already authenticated, redirect to dashboard
+  useEffect(() => {
+    if (!authLoading && user) {
+      navigate(roleHome(user.role), { replace: true });
+    }
+  }, [authLoading, user, navigate]);
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -24,9 +37,9 @@ export default function Register() {
       const { token, user, studentProfile } = await api.verify(email.trim(), code.trim());
       login(token, user, studentProfile);
 
-      if (user.role === 'admin') navigate('/admin');
-      else if (user.role === 'lecturer') navigate('/lecturer');
-      else navigate('/student');
+      if (user.role === 'admin') navigate('/admin', { replace: true });
+      else if (user.role === 'lecturer') navigate('/lecturer', { replace: true });
+      else navigate('/student', { replace: true });
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Activation failed');
     } finally {

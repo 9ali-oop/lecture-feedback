@@ -1,5 +1,6 @@
 import { BrowserRouter, Routes, Route, Navigate, useNavigate } from 'react-router-dom';
 import { AuthProvider, useAuth } from './contexts/AuthContext.tsx';
+import ProtectedRoute from './components/ProtectedRoute.tsx';
 import Login from './pages/Login.tsx';
 import Register from './pages/Register.tsx';
 import AdminDashboard from './pages/admin/Dashboard.tsx';
@@ -67,19 +68,19 @@ export default function App() {
           <Route path="/register" element={<Register />} />
 
           {/* Admin */}
-          <Route path="/admin" element={<AdminDashboard />} />
+          <Route path="/admin" element={<ProtectedRoute allowedRoles={['admin']}><AdminDashboard /></ProtectedRoute>} />
 
           {/* Lecturer */}
-          <Route path="/lecturer" element={<LecturerDashboard />} />
-          <Route path="/lecturer/module/:moduleId" element={<LecturerModule />} />
-          <Route path="/lecturer/live/:sessionId" element={<LiveSession />} />
-          <Route path="/lecturer/report/:sessionId" element={<SessionReport />} />
+          <Route path="/lecturer" element={<ProtectedRoute allowedRoles={['lecturer', 'admin']}><LecturerDashboard /></ProtectedRoute>} />
+          <Route path="/lecturer/module/:moduleId" element={<ProtectedRoute allowedRoles={['lecturer', 'admin']}><LecturerModule /></ProtectedRoute>} />
+          <Route path="/lecturer/live/:sessionId" element={<ProtectedRoute allowedRoles={['lecturer', 'admin']}><LiveSession /></ProtectedRoute>} />
+          <Route path="/lecturer/report/:sessionId" element={<ProtectedRoute allowedRoles={['lecturer', 'admin']}><SessionReport /></ProtectedRoute>} />
 
           {/* Student */}
-          <Route path="/student" element={<StudentDashboard />} />
-          <Route path="/student/session/:sessionId" element={<StudentSession />} />
-          <Route path="/student/module/:moduleId" element={<StudentModule />} />
-          <Route path="/student/report/:sessionId" element={<StudentSessionReport />} />
+          <Route path="/student" element={<ProtectedRoute allowedRoles={['student']}><StudentDashboard /></ProtectedRoute>} />
+          <Route path="/student/session/:sessionId" element={<ProtectedRoute allowedRoles={['student']}><StudentSession /></ProtectedRoute>} />
+          <Route path="/student/module/:moduleId" element={<ProtectedRoute allowedRoles={['student']}><StudentModule /></ProtectedRoute>} />
+          <Route path="/student/report/:sessionId" element={<ProtectedRoute allowedRoles={['student']}><StudentSessionReport /></ProtectedRoute>} />
         </Routes>
       </BrowserRouter>
     </AuthProvider>

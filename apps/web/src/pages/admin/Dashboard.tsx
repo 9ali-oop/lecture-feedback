@@ -1,8 +1,8 @@
 import { useEffect, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import Layout from '../../components/Layout.tsx';
 import { api } from '../../lib/api.ts';
 import { useAuth } from '../../contexts/AuthContext.tsx';
-import { useNavigate } from 'react-router-dom';
 import type { User, ProvisionUserResponse } from '@lecture-feedback/shared';
 
 export default function AdminDashboard() {
@@ -25,12 +25,8 @@ export default function AdminDashboard() {
   const [submitting, setSubmitting] = useState(false);
 
   useEffect(() => {
-    if (user?.role !== 'admin') {
-      navigate('/login');
-      return;
-    }
     api.listUsers().then((u) => { setUsers(u); setLoading(false); });
-  }, [user, navigate]);
+  }, []);
 
   async function handleProvision(e: React.FormEvent) {
     e.preventDefault();
