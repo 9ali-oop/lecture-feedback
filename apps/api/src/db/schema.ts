@@ -6,6 +6,7 @@ import {
   pgTable,
   text,
   timestamp,
+  unique,
   uuid,
 } from 'drizzle-orm/pg-core';
 
@@ -59,7 +60,9 @@ export const moduleEnrollments = pgTable('module_enrollments', {
     .notNull()
     .references(() => modules.id, { onDelete: 'cascade' }),
   enrolledAt: timestamp('enrolled_at').notNull().defaultNow(),
-});
+}, (t) => [
+  unique('module_enrollments_student_module').on(t.studentId, t.moduleId),
+]);
 
 export const sessions = pgTable('sessions', {
   id: uuid('id').primaryKey().defaultRandom(),
@@ -191,7 +194,9 @@ export const pollResponses = pgTable('poll_responses', {
     .references(() => users.id),
   optionIndex: integer('option_index').notNull(),
   respondedAt: timestamp('responded_at').notNull().defaultNow(),
-});
+}, (t) => [
+  unique('poll_responses_poll_student').on(t.pollId, t.studentId),
+]);
 
 // ── Question Upvotes ────────────────────────────────────────────────────────
 
@@ -204,7 +209,9 @@ export const questionUpvotes = pgTable('question_upvotes', {
     .notNull()
     .references(() => users.id),
   createdAt: timestamp('created_at').notNull().defaultNow(),
-});
+}, (t) => [
+  unique('question_upvotes_question_student').on(t.questionId, t.studentId),
+]);
 
 // ── Pace Feedback ───────────────────────────────────────────────────────────
 
@@ -220,7 +227,9 @@ export const paceFeedback = pgTable('pace_feedback', {
     .references(() => users.id),
   value: paceEnum('value').notNull(),
   updatedAt: timestamp('updated_at').notNull().defaultNow(),
-});
+}, (t) => [
+  unique('pace_feedback_session_student').on(t.sessionId, t.studentId),
+]);
 
 // ── Post-Lecture Reflections ─────────────────────────────────────────────────
 
@@ -235,7 +244,9 @@ export const reflections = pgTable('reflections', {
   mostImportant: text('most_important').notNull().default(''),
   stillUnclear: text('still_unclear').notNull().default(''),
   createdAt: timestamp('created_at').notNull().defaultNow(),
-});
+}, (t) => [
+  unique('reflections_session_student').on(t.sessionId, t.studentId),
+]);
 
 export const slideNotes = pgTable('slide_notes', {
   id: uuid('id').primaryKey().defaultRandom(),
