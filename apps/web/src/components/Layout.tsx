@@ -1,11 +1,6 @@
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext.tsx';
-
-function roleHome(role: string) {
-  if (role === 'admin') return '/admin';
-  if (role === 'lecturer') return '/lecturer';
-  return '/student';
-}
+import { roleHome } from '../lib/roles.ts';
 
 interface LayoutProps {
   children: React.ReactNode;

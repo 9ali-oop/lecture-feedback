@@ -1,7 +1,7 @@
 import { Hono } from 'hono';
 import { zValidator } from '@hono/zod-validator';
 import { z } from 'zod';
-import { eq, count, and } from 'drizzle-orm';
+import { eq, count, and, sql } from 'drizzle-orm';
 import { db } from '../db/index.js';
 import { modules, moduleEnrollments, users } from '../db/schema.js';
 import { requireAuth } from '../middleware/auth.js';
@@ -20,6 +20,12 @@ router.use('*', requireAuth());
 router.get('/', async (c) => {
   const { sub, role } = c.get('jwtPayload');
 
+  const enrollCountSq = db
+    .select({ moduleId: moduleEnrollments.moduleId, cnt: count().as('cnt') })
+    .from(moduleEnrollments)
+    .groupBy(moduleEnrollments.moduleId)
+    .as('enroll_counts');
+
   const rows = await db
     .select({
       id: modules.id,
@@ -29,45 +35,37 @@ router.get('/', async (c) => {
       lecturerId: modules.lecturerId,
       lecturerName: users.name,
       createdAt: modules.createdAt,
+      enrolledCount: sql<number>`coalesce(${enrollCountSq.cnt}, 0)`.as('enrolled_count'),
     })
     .from(modules)
-    .innerJoin(users, eq(modules.lecturerId, users.id));
+    .innerJoin(users, eq(modules.lecturerId, users.id))
+    .leftJoin(enrollCountSq, eq(modules.id, enrollCountSq.moduleId));
 
   const filtered = role === 'lecturer' ? rows.filter((r) => r.lecturerId === sub) : rows;
 
-  // Attach enrollment counts
-  const result = await Promise.all(
-    filtered.map(async (m) => {
-      const [{ count: enrolledCount }] = await db
-        .select({ count: count() })
-        .from(moduleEnrollments)
-        .where(eq(moduleEnrollments.moduleId, m.id));
+  // For students, batch-check which modules they are enrolled in
+  let enrolledSet: Set<string> | undefined;
+  if (role === 'student') {
+    const myEnrollments = await db
+      .select({ moduleId: moduleEnrollments.moduleId })
+      .from(moduleEnrollments)
+      .where(eq(moduleEnrollments.studentId, sub));
+    enrolledSet = new Set(myEnrollments.map((e) => e.moduleId));
+  }
 
-      let enrolled: boolean | undefined;
-      if (role === 'student') {
-        const rows = await db
-          .select()
-          .from(moduleEnrollments)
-          .where(and(eq(moduleEnrollments.moduleId, m.id), eq(moduleEnrollments.studentId, sub)))
-          .limit(1);
-        enrolled = rows.length > 0;
-      }
-
-      return {
-        id: m.id,
-        code: m.code,
-        name: m.name,
-        color: m.color,
-        lecturerId: m.lecturerId,
-        lecturerName: m.lecturerName,
-        enrolledCount: Number(enrolledCount),
-        enrolled,
-        createdAt: m.createdAt.toISOString(),
-      };
-    }),
+  return c.json(
+    filtered.map((m) => ({
+      id: m.id,
+      code: m.code,
+      name: m.name,
+      color: m.color,
+      lecturerId: m.lecturerId,
+      lecturerName: m.lecturerName,
+      enrolledCount: Number(m.enrolledCount),
+      enrolled: enrolledSet ? enrolledSet.has(m.id) : undefined,
+      createdAt: m.createdAt.toISOString(),
+    })),
   );
-
-  return c.json(result);
 });
 
 // Create module (lecturer only)

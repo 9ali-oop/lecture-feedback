@@ -1,7 +1,7 @@
 import { Hono } from 'hono';
 import { zValidator } from '@hono/zod-validator';
 import { z } from 'zod';
-import { eq, count } from 'drizzle-orm';
+import { eq, count, sql } from 'drizzle-orm';
 import { db } from '../db/index.js';
 import { questions, users, questionUpvotes } from '../db/schema.js';
 import { requireAuth } from '../middleware/auth.js';
@@ -15,6 +15,12 @@ router.use('*', requireAuth());
 router.get('/session/:sessionId', async (c) => {
   const { sessionId } = c.req.param();
 
+  const upvoteCountSq = db
+    .select({ questionId: questionUpvotes.questionId, cnt: count().as('cnt') })
+    .from(questionUpvotes)
+    .groupBy(questionUpvotes.questionId)
+    .as('upvote_counts');
+
   const rows = await db
     .select({
       id: questions.id,
@@ -26,17 +32,12 @@ router.get('/session/:sessionId', async (c) => {
       askedAt: questions.askedAt,
       answered: questions.answered,
       answeredAt: questions.answeredAt,
+      upvoteCount: sql<number>`coalesce(${upvoteCountSq.cnt}, 0)`.as('upvote_count'),
     })
     .from(questions)
     .innerJoin(users, eq(questions.studentId, users.id))
+    .leftJoin(upvoteCountSq, eq(questions.id, upvoteCountSq.questionId))
     .where(eq(questions.sessionId, sessionId));
-
-  // Get upvote counts per question
-  const upvoteCounts = new Map<string, number>();
-  for (const q of rows) {
-    const [{ count: c }] = await db.select({ count: count() }).from(questionUpvotes).where(eq(questionUpvotes.questionId, q.id));
-    upvoteCounts.set(q.id, Number(c));
-  }
 
   return c.json(
     rows.map((q) => ({
@@ -49,7 +50,7 @@ router.get('/session/:sessionId', async (c) => {
       askedAt: q.askedAt.toISOString(),
       answered: q.answered,
       answeredAt: q.answeredAt?.toISOString() ?? null,
-      upvoteCount: upvoteCounts.get(q.id) ?? 0,
+      upvoteCount: Number(q.upvoteCount),
     })),
   );
 });

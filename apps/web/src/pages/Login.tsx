@@ -2,12 +2,7 @@ import { useState, useEffect } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
 import { api } from '../lib/api.ts';
 import { useAuth } from '../contexts/AuthContext.tsx';
-
-function roleHome(role: string) {
-  if (role === 'admin') return '/admin';
-  if (role === 'lecturer') return '/lecturer';
-  return '/student';
-}
+import { roleHome } from '../lib/roles.ts';
 
 export default function Login() {
   const navigate = useNavigate();

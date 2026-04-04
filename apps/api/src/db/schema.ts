@@ -1,5 +1,6 @@
 import {
   boolean,
+  index,
   integer,
   jsonb,
   pgEnum,
@@ -89,7 +90,9 @@ export const sessionParticipants = pgTable('session_participants', {
     .references(() => users.id),
   joinedAt: timestamp('joined_at').notNull().defaultNow(),
   leftAt: timestamp('left_at'),
-});
+}, (t) => [
+  index('session_participants_session_idx').on(t.sessionId),
+]);
 
 export const feedbackEvents = pgTable('feedback_events', {
   id: uuid('id').primaryKey().defaultRandom(),
@@ -103,7 +106,9 @@ export const feedbackEvents = pgTable('feedback_events', {
   emoji: emojiEnum('emoji').notNull(),
   selectedAt: timestamp('selected_at').notNull().defaultNow(),
   durationMs: integer('duration_ms'),
-});
+}, (t) => [
+  index('feedback_events_session_idx').on(t.sessionId),
+]);
 
 export const questions = pgTable('questions', {
   id: uuid('id').primaryKey().defaultRandom(),
@@ -118,7 +123,9 @@ export const questions = pgTable('questions', {
   askedAt: timestamp('asked_at').notNull().defaultNow(),
   answered: boolean('answered').notNull().default(false),
   answeredAt: timestamp('answered_at'),
-});
+}, (t) => [
+  index('questions_session_idx').on(t.sessionId),
+]);
 
 export const slideTimings = pgTable('slide_timings', {
   id: uuid('id').primaryKey().defaultRandom(),
@@ -128,7 +135,9 @@ export const slideTimings = pgTable('slide_timings', {
   slideIndex: integer('slide_index').notNull(),
   startedAt: timestamp('started_at').notNull(),
   endedAt: timestamp('ended_at'),              // null = currently active
-});
+}, (t) => [
+  index('slide_timings_session_idx').on(t.sessionId),
+]);
 
 export const slideWhiteboards = pgTable('slide_whiteboards', {
   id: uuid('id').primaryKey().defaultRandom(),
@@ -259,4 +268,6 @@ export const slideNotes = pgTable('slide_notes', {
   slideIndex: integer('slide_index').notNull(),
   content: text('content').notNull(),
   updatedAt: timestamp('updated_at').notNull().defaultNow(),
-});
+}, (t) => [
+  index('slide_notes_session_student_idx').on(t.sessionId, t.studentId),
+]);
