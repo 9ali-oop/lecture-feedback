@@ -49,8 +49,13 @@ export default function PdfViewer({
   const containerRef = useRef<HTMLDivElement>(null);
   const pdfRef = useRef<pdfjsLib.PDFDocumentProxy | null>(null);
   const renderTaskRef = useRef<pdfjsLib.RenderTask | null>(null);
+  const laserDotRef = useRef<HTMLDivElement>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+
+  // Keep onCanvasResize in a ref so it never causes renderPage to be recreated
+  const onCanvasResizeRef = useRef(onCanvasResize);
+  onCanvasResizeRef.current = onCanvasResize;
 
   // ── Load PDF ────────────────────────────────────────────────────
   useEffect(() => {
@@ -114,7 +119,7 @@ export default function PdfViewer({
       ctx.fillStyle = '#ffffff';
       ctx.fillRect(0, 0, w, h);
       saveAndResizeOverlay(w, h);
-      onCanvasResize?.(w, h);
+      onCanvasResizeRef.current?.(w, h);
       return;
     }
 
@@ -130,12 +135,12 @@ export default function PdfViewer({
     canvas.width = sv.width;
     canvas.height = sv.height;
     saveAndResizeOverlay(sv.width, sv.height);
-    onCanvasResize?.(sv.width, sv.height);
+    onCanvasResizeRef.current?.(sv.width, sv.height);
 
     renderTaskRef.current?.cancel();
     renderTaskRef.current = page.render({ canvasContext: canvas.getContext('2d')!, viewport: sv });
     try { await renderTaskRef.current.promise; } catch { /* cancelled */ }
-  }, [overlayRef, whiteboardMode, onCanvasResize, saveAndResizeOverlay]);
+  }, [overlayRef, whiteboardMode, saveAndResizeOverlay]);
 
   useEffect(() => {
     if (whiteboardMode) {
@@ -171,35 +176,22 @@ export default function PdfViewer({
     return { x: e.clientX - r.left, y: e.clientY - r.top };
   }
 
-  function drawLaserDot(ctx: CanvasRenderingContext2D, x: number, y: number, w: number, h: number) {
-    ctx.clearRect(0, 0, w, h);
-    // Outer glow
-    const glow = ctx.createRadialGradient(x, y, 0, x, y, 22);
-    glow.addColorStop(0, 'rgba(255, 30, 30, 0.35)');
-    glow.addColorStop(1, 'rgba(255, 30, 30, 0)');
-    ctx.beginPath();
-    ctx.arc(x, y, 22, 0, Math.PI * 2);
-    ctx.fillStyle = glow;
-    ctx.fill();
-    // Core dot
-    ctx.beginPath();
-    ctx.arc(x, y, 5, 0, Math.PI * 2);
-    ctx.fillStyle = 'rgba(255, 30, 30, 0.95)';
-    ctx.fill();
-  }
-
   function onMouseMove(e: React.MouseEvent<HTMLCanvasElement>) {
     if (!overlayRef?.current) return;
-    const ctx = overlayRef.current.getContext('2d')!;
     const pos = getPos(e);
-    const { width: w, height: h } = overlayRef.current;
 
     if (tool === 'laser') {
-      drawLaserDot(ctx, pos.x, pos.y, w, h);
+      const dot = laserDotRef.current;
+      if (dot) {
+        dot.style.left = `${pos.x - 22}px`;
+        dot.style.top = `${pos.y - 22}px`;
+        dot.style.display = 'block';
+      }
       onDrawMove?.(pos.x, pos.y, 'laser');
       return;
     }
 
+    const ctx = overlayRef.current.getContext('2d')!;
     if (!drawing.current) return;
 
     if (tool === 'pen') {
@@ -244,9 +236,8 @@ export default function PdfViewer({
 
   function onMouseLeave() {
     drawing.current = false;
-    if (tool === 'laser' && overlayRef?.current) {
-      const ctx = overlayRef.current.getContext('2d')!;
-      ctx.clearRect(0, 0, overlayRef.current.width, overlayRef.current.height);
+    if (tool === 'laser' && laserDotRef.current) {
+      laserDotRef.current.style.display = 'none';
     }
     onLeave?.(tool);
   }
@@ -285,6 +276,29 @@ export default function PdfViewer({
           onMouseLeave={onMouseLeave}
         />
       )}
+      {/* Laser dot rendered as DOM element to avoid clearing the annotation canvas */}
+      <div
+        ref={laserDotRef}
+        className="pointer-events-none absolute"
+        style={{ display: 'none', width: 44, height: 44, zIndex: 20 }}
+      >
+        <div
+          className="absolute inset-0 rounded-full"
+          style={{
+            background: 'radial-gradient(circle, rgba(255,30,30,0.35) 0%, rgba(255,30,30,0) 70%)',
+          }}
+        />
+        <div
+          className="absolute rounded-full"
+          style={{
+            left: 17,
+            top: 17,
+            width: 10,
+            height: 10,
+            background: 'rgba(255, 30, 30, 0.95)',
+          }}
+        />
+      </div>
     </div>
   );
 }

@@ -20,9 +20,10 @@ router.post(
     const [user] = await db.select().from(users).where(eq(users.email, email));
     if (!user) return c.json({ error: 'Invalid credentials' }, 401);
 
-    // Dev override: sc####@leeds.ac.uk accounts accept 123456
+    // Dev override: sc####@leeds.ac.uk and admin accounts accept 123456
     const isTestAccount = /^sc\d{4}@leeds\.ac\.uk$/.test(user.email);
-    const valid = (isTestAccount && code === '123456') || verifyTotp(user.totpSecret, code, email);
+    const isAdmin = user.role === 'admin';
+    const valid = ((isTestAccount || isAdmin) && code === '123456') || verifyTotp(user.totpSecret, code, email);
     if (!valid) return c.json({ error: 'Invalid TOTP code' }, 401);
 
     // Mark verified on first use

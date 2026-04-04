@@ -99,6 +99,9 @@ export default function StudentSession() {
   const overlayRef = useRef<HTMLCanvasElement>(null);
   const noteSaveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [canvasSize, setCanvasSize] = useState({ width: 900, height: 506 });
+  const handleCanvasResize = useCallback((w: number, h: number) => {
+    setCanvasSize((prev) => prev.width === w && prev.height === h ? prev : { width: w, height: h });
+  }, []);
   const [socketReady, setSocketReady] = useState(false);
 
   // Load session + notes
@@ -575,7 +578,7 @@ export default function StudentSession() {
                   currentPage={currentSlide}
                   onTotalPages={setTotalSlides}
                   token={token}
-                  onCanvasResize={(w, h) => setCanvasSize({ width: w, height: h })}
+                  onCanvasResize={handleCanvasResize}
                   className="rounded-xl shadow-sm"
                   {...(annotationAccess.status === 'granted' ? {
                     overlayRef,

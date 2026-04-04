@@ -1,6 +1,12 @@
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext.tsx';
 
+function roleHome(role: string) {
+  if (role === 'admin') return '/admin';
+  if (role === 'lecturer') return '/lecturer';
+  return '/student';
+}
+
 interface LayoutProps {
   children: React.ReactNode;
   title?: string;
@@ -8,12 +14,22 @@ interface LayoutProps {
 }
 
 export default function Layout({ children, title, back }: LayoutProps) {
-  const { user, logout, impersonating } = useAuth();
+  const { user, logout, impersonating, stopImpersonating } = useAuth();
   const navigate = useNavigate();
 
   function handleLogout() {
     logout();
     navigate('/login');
+  }
+
+  // When impersonating, home always goes back to admin
+  const home = impersonating ? '/admin' : user ? roleHome(user.role) : '/login';
+
+  function handleHomeClick() {
+    if (impersonating) {
+      stopImpersonating();
+    }
+    navigate(home);
   }
 
   return (
@@ -31,7 +47,12 @@ export default function Layout({ children, title, back }: LayoutProps) {
                 </svg>
               </button>
             )}
-            <span className="font-semibold text-gray-900">{title ?? 'LectureFlow'}</span>
+            <button
+              onClick={handleHomeClick}
+              className="font-semibold text-gray-900 transition hover:text-blue-600"
+            >
+              {title ?? 'LectureFlow'}
+            </button>
           </div>
 
           <div className="flex items-center gap-3">

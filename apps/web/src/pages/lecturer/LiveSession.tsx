@@ -193,6 +193,9 @@ export default function LiveSession() {
 
   // Canvas dimensions (updated via onCanvasResize callback)
   const [canvasSize, setCanvasSize] = useState({ width: 900, height: 506 });
+  const handleCanvasResize = useCallback((w: number, h: number) => {
+    setCanvasSize((prev) => prev.width === w && prev.height === h ? prev : { width: w, height: h });
+  }, []);
 
   // Per-slide layer data: key = `${slideIndex}-${'slide'|'wb'}`
   const layerDataRef = useRef(new Map<string, SlideLayerData>());
@@ -528,8 +531,17 @@ export default function LiveSession() {
       {/* ── Top bar ── */}
       <div className="flex shrink-0 items-center justify-between border-b border-gray-800 bg-gray-900 px-4 py-2 gap-4">
 
-        {/* Left: session info */}
+        {/* Left: back + session info */}
         <div className="flex items-center gap-3 min-w-0">
+          <button
+            onClick={() => navigate(session?.moduleId ? `/lecturer/module/${session.moduleId}` : '/lecturer')}
+            className="rounded-lg p-1.5 text-gray-400 transition hover:bg-gray-700 hover:text-gray-200"
+            title="Back to module"
+          >
+            <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
+            </svg>
+          </button>
           <span className="inline-flex shrink-0 items-center gap-1.5 rounded-full bg-green-950 px-2.5 py-1 text-xs font-semibold text-green-400 ring-1 ring-green-800">
             <span className="h-1.5 w-1.5 rounded-full bg-green-400 animate-pulse" />
             Live
@@ -840,7 +852,7 @@ export default function LiveSession() {
                   eraserWidth={eraserWidth}
                   token={token}
                   whiteboardMode={whiteboardMode}
-                  onCanvasResize={(w, h) => setCanvasSize({ width: w, height: h })}
+                  onCanvasResize={handleCanvasResize}
                   onDrawStart={(x, y, drawTool) => {
                     if (drawTool === 'pen') annotationSync.startDrawBatch(penColor, penWidth);
                     if (drawTool === 'eraser') annotationSync.startEraseBatch(eraserWidth);
