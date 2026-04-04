@@ -15,9 +15,35 @@ const router = new Hono();
 
 router.use('*', requireAuth());
 
+/** Check that the current user may access the given session's module. */
+async function requireSessionAccess(
+  sessionModuleId: string,
+  role: string,
+  sub: string,
+): Promise<{ ok: true } | { ok: false; status: 403 | 404; message: string }> {
+  const mod = (await db.select().from(modules).where(eq(modules.id, sessionModuleId)))[0];
+  if (!mod) return { ok: false, status: 404, message: 'Module not found' };
+  if (role === 'admin') return { ok: true };
+  if (role === 'lecturer') {
+    if (mod.lecturerId !== sub) return { ok: false, status: 403, message: 'Forbidden' };
+    return { ok: true };
+  }
+  // student -- must be enrolled
+  const enrollment = await db
+    .select()
+    .from(moduleEnrollments)
+    .where(and(eq(moduleEnrollments.moduleId, sessionModuleId), eq(moduleEnrollments.studentId, sub)));
+  if (enrollment.length === 0) return { ok: false, status: 403, message: 'Forbidden' };
+  return { ok: true };
+}
+
 // List sessions for a module
 router.get('/module/:moduleId', async (c) => {
+  const { sub, role } = c.get('jwtPayload');
   const { moduleId } = c.req.param();
+
+  const access = await requireSessionAccess(moduleId, role, sub);
+  if (!access.ok) return c.json({ error: access.message }, access.status);
 
   const rows = await db
     .select({
@@ -58,9 +84,13 @@ router.get('/module/:moduleId', async (c) => {
 
 // Get single session
 router.get('/:id', async (c) => {
+  const { sub, role } = c.get('jwtPayload');
   const { id } = c.req.param();
   const session = (await db.select().from(sessions).where(eq(sessions.id, id)))[0];
   if (!session) return c.json({ error: 'Session not found' }, 404);
+
+  const access = await requireSessionAccess(session.moduleId, role, sub);
+  if (!access.ok) return c.json({ error: access.message }, access.status);
 
   const mod = (await db.select().from(modules).where(eq(modules.id, session.moduleId)))[0];
 
@@ -127,7 +157,15 @@ router.post('/:id/pdf', requireAuth('lecturer', 'admin'), async (c) => {
 
 // Serve PDF
 router.get('/:id/pdf', async (c) => {
+  const { sub, role } = c.get('jwtPayload');
   const { id } = c.req.param();
+
+  const session = (await db.select().from(sessions).where(eq(sessions.id, id)))[0];
+  if (!session) return c.json({ error: 'Session not found' }, 404);
+
+  const access = await requireSessionAccess(session.moduleId, role, sub);
+  if (!access.ok) return c.json({ error: access.message }, access.status);
+
   const pdfBuffer = await readPdf(id);
   if (!pdfBuffer) return c.json({ error: 'PDF not found' }, 404);
 
@@ -141,9 +179,14 @@ router.get('/:id/pdf', async (c) => {
 
 // Start session (lecturer only)
 router.post('/:id/start', requireAuth('lecturer', 'admin'), async (c) => {
+  const { sub, role } = c.get('jwtPayload');
   const { id } = c.req.param();
   const session = (await db.select().from(sessions).where(eq(sessions.id, id)))[0];
   if (!session) return c.json({ error: 'Session not found' }, 404);
+
+  const access = await requireSessionAccess(session.moduleId, role, sub);
+  if (!access.ok) return c.json({ error: access.message }, access.status);
+
   if (session.status === 'live') return c.json({ error: 'Already live' }, 409);
 
   await db.update(sessions).set({ status: 'live', startedAt: new Date() }).where(eq(sessions.id, id));
@@ -155,7 +198,14 @@ router.post('/:id/start', requireAuth('lecturer', 'admin'), async (c) => {
 
 // End session (lecturer only)
 router.post('/:id/end', requireAuth('lecturer', 'admin'), async (c) => {
+  const { sub, role } = c.get('jwtPayload');
   const { id } = c.req.param();
+  const session = (await db.select().from(sessions).where(eq(sessions.id, id)))[0];
+  if (!session) return c.json({ error: 'Session not found' }, 404);
+
+  const access = await requireSessionAccess(session.moduleId, role, sub);
+  if (!access.ok) return c.json({ error: access.message }, access.status);
+
   await sessionManager.endSession(id);
   return c.json({ ok: true });
 });
@@ -207,7 +257,15 @@ router.post(
 
 // Serve a whiteboard image
 router.get('/:id/whiteboards/:slideIndex', async (c) => {
+  const { sub, role } = c.get('jwtPayload');
   const { id, slideIndex } = c.req.param();
+
+  const session = (await db.select().from(sessions).where(eq(sessions.id, id)))[0];
+  if (!session) return c.json({ error: 'Session not found' }, 404);
+
+  const access = await requireSessionAccess(session.moduleId, role, sub);
+  if (!access.ok) return c.json({ error: access.message }, access.status);
+
   const buffer = await readWhiteboard(id, parseInt(slideIndex, 10));
   if (!buffer) return c.json({ error: 'Whiteboard not found' }, 404);
 
@@ -244,7 +302,15 @@ router.post(
 
 // Serve an annotation image
 router.get('/:id/annotations/:slideIndex', async (c) => {
+  const { sub, role } = c.get('jwtPayload');
   const { id, slideIndex } = c.req.param();
+
+  const session = (await db.select().from(sessions).where(eq(sessions.id, id)))[0];
+  if (!session) return c.json({ error: 'Session not found' }, 404);
+
+  const access = await requireSessionAccess(session.moduleId, role, sub);
+  if (!access.ok) return c.json({ error: access.message }, access.status);
+
   const buffer = await readAnnotation(id, parseInt(slideIndex, 10));
   if (!buffer) return c.json({ error: 'Annotation not found' }, 404);
   return new Response(new Uint8Array(buffer), {
@@ -260,11 +326,10 @@ router.get('/:id/report/pdf', async (c) => {
   const session = (await db.select().from(sessions).where(eq(sessions.id, id)))[0];
   if (!session) return c.json({ error: 'Session not found' }, 404);
   if (!session.pdfPath) return c.json({ error: 'No PDF uploaded' }, 404);
-  if (role === 'student') {
-    const enrollment = await db.select().from(moduleEnrollments)
-      .where(and(eq(moduleEnrollments.moduleId, session.moduleId), eq(moduleEnrollments.studentId, sub)));
-    if (enrollment.length === 0) return c.json({ error: 'Forbidden' }, 403);
-  }
+
+  const access = await requireSessionAccess(session.moduleId, role, sub);
+  if (!access.ok) return c.json({ error: access.message }, access.status);
+
   const pdfBuffer = await readPdf(id);
   if (!pdfBuffer) return c.json({ error: 'PDF file not found' }, 404);
   const pdfDoc = await PDFDocument.load(pdfBuffer);
@@ -351,16 +416,10 @@ router.get('/:id/report', async (c) => {
   const session = (await db.select().from(sessions).where(eq(sessions.id, id)))[0];
   if (!session) return c.json({ error: 'Session not found' }, 404);
 
-  const mod = (await db.select().from(modules).where(eq(modules.id, session.moduleId)))[0];
+  const access = await requireSessionAccess(session.moduleId, role, sub);
+  if (!access.ok) return c.json({ error: access.message }, access.status);
 
-  // Students must be enrolled in the module to view the report
-  if (role === 'student') {
-    const enrollment = await db
-      .select()
-      .from(moduleEnrollments)
-      .where(and(eq(moduleEnrollments.moduleId, session.moduleId), eq(moduleEnrollments.studentId, sub)));
-    if (enrollment.length === 0) return c.json({ error: 'Forbidden' }, 403);
-  }
+  const mod = (await db.select().from(modules).where(eq(modules.id, session.moduleId)))[0];
 
   const [{ count: enrolledCount }] = await db
     .select({ count: count() })

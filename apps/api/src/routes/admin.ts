@@ -123,7 +123,11 @@ router.post('/impersonate/:userId', async (c) => {
 
 // Delete a user
 router.delete('/users/:id', async (c) => {
+  const { sub } = c.get('jwtPayload');
   const { id } = c.req.param();
+  if (id === sub) return c.json({ error: 'Cannot delete your own account' }, 400);
+  const [target] = await db.select().from(users).where(eq(users.id, id));
+  if (!target) return c.json({ error: 'User not found' }, 404);
   await db.delete(users).where(eq(users.id, id));
   return c.json({ ok: true });
 });
