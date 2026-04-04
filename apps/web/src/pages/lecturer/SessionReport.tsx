@@ -185,9 +185,14 @@ export default function SessionReport({ backUrl }: { backUrl?: string }) {
   // Reflections
   const [reflections, setReflections] = useState<ReflectionSummary | null>(null);
 
+  const [error, setError] = useState('');
+
   useEffect(() => {
     if (!sessionId) return;
-    api.getReport(sessionId).then((r) => { setReport(r); setLoading(false); });
+    api.getReport(sessionId)
+      .then((r) => { setReport(r); })
+      .catch((err) => { setError(err instanceof Error ? err.message : 'Failed to load report'); })
+      .finally(() => { setLoading(false); });
     api.getTimeline(sessionId).then(setTimeline).catch(() => {});
     api.getReflections(sessionId).then(setReflections).catch(() => {});
   }, [sessionId]);
@@ -195,9 +200,9 @@ export default function SessionReport({ backUrl }: { backUrl?: string }) {
   useEffect(() => {
     if (!sessionId || !user) return;
     if (user.role === 'student') {
-      api.listNotes(sessionId).then(setReportNotes);
+      api.listNotes(sessionId).then(setReportNotes).catch(() => {});
     } else {
-      api.getAllNotes(sessionId).then(setReportNotes);
+      api.getAllNotes(sessionId).then(setReportNotes).catch(() => {});
     }
   }, [sessionId, user]);
 
@@ -251,6 +256,14 @@ export default function SessionReport({ backUrl }: { backUrl?: string }) {
         <div className="flex h-64 items-center justify-center">
           <div className="h-6 w-6 animate-spin rounded-full border-4 border-blue-600 border-t-transparent" />
         </div>
+      </Layout>
+    );
+  }
+
+  if (error) {
+    return (
+      <Layout title="Session report" back={backUrl}>
+        <div className="rounded-lg bg-red-50 px-4 py-3 text-sm text-red-600">{error}</div>
       </Layout>
     );
   }

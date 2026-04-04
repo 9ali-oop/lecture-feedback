@@ -10,14 +10,17 @@ export default function StudentModule() {
   const [sessions, setSessions] = useState<Session[]>([]);
   const [moduleName, setModuleName] = useState('');
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
 
   useEffect(() => {
     if (!moduleId) return;
-    api.listSessions(moduleId).then((s) => {
-      setSessions(s);
-      if (s[0]) setModuleName(`${s[0].moduleCode} — ${s[0].moduleName}`);
-      setLoading(false);
-    });
+    api.listSessions(moduleId)
+      .then((s) => {
+        setSessions(s);
+        if (s[0]) setModuleName(`${s[0].moduleCode} — ${s[0].moduleName}`);
+      })
+      .catch((err) => { setError(err instanceof Error ? err.message : 'Failed to load sessions'); })
+      .finally(() => { setLoading(false); });
   }, [moduleId]);
 
   const statusBadge: Record<string, string> = {
@@ -31,6 +34,10 @@ export default function StudentModule() {
       <div className="mb-6">
         <h1 className="text-2xl font-bold text-gray-900">Sessions</h1>
       </div>
+
+      {error && (
+        <div className="mb-4 rounded-lg bg-red-50 px-4 py-3 text-sm text-red-600">{error}</div>
+      )}
 
       {loading ? (
         <div className="flex h-32 items-center justify-center">

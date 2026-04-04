@@ -9,6 +9,7 @@ export default function StudentDashboard() {
   const [modules, setModules] = useState<(Module & { enrolled?: boolean })[]>([]);
   const [liveSessions, setLiveSessions] = useState<Session[]>([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
   const [tab, setTab] = useState<'enrolled' | 'browse'>('enrolled');
 
   useEffect(() => {
@@ -19,22 +20,33 @@ export default function StudentDashboard() {
       const sessionArrays = await Promise.all(enrolled.map((m) => api.listSessions(m.id)));
       const live = sessionArrays.flat().filter((s) => s.status === 'live');
       setLiveSessions(live);
+    }).catch((err) => {
+      setError(err instanceof Error ? err.message : 'Failed to load modules');
+    }).finally(() => {
       setLoading(false);
     });
   }, []);
 
   async function handleEnroll(moduleId: string) {
-    await api.enrollModule(moduleId);
-    setModules((prev) =>
-      prev.map((m) => (m.id === moduleId ? { ...m, enrolled: true, enrolledCount: m.enrolledCount + 1 } : m)),
-    );
+    try {
+      await api.enrollModule(moduleId);
+      setModules((prev) =>
+        prev.map((m) => (m.id === moduleId ? { ...m, enrolled: true, enrolledCount: m.enrolledCount + 1 } : m)),
+      );
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to enroll');
+    }
   }
 
   async function handleUnenroll(moduleId: string) {
-    await api.unenrollModule(moduleId);
-    setModules((prev) =>
-      prev.map((m) => (m.id === moduleId ? { ...m, enrolled: false, enrolledCount: m.enrolledCount - 1 } : m)),
-    );
+    try {
+      await api.unenrollModule(moduleId);
+      setModules((prev) =>
+        prev.map((m) => (m.id === moduleId ? { ...m, enrolled: false, enrolledCount: m.enrolledCount - 1 } : m)),
+      );
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to unenroll');
+    }
   }
 
   const enrolledModules = modules.filter((m) => m.enrolled);
@@ -82,6 +94,10 @@ export default function StudentDashboard() {
           ))}
         </div>
       </div>
+
+      {error && (
+        <div className="mb-4 rounded-lg bg-red-50 px-4 py-3 text-sm text-red-600">{error}</div>
+      )}
 
       {loading ? (
         <div className="flex h-32 items-center justify-center">

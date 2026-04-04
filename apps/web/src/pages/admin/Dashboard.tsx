@@ -24,8 +24,13 @@ export default function AdminDashboard() {
   const [formError, setFormError] = useState('');
   const [submitting, setSubmitting] = useState(false);
 
+  const [error, setError] = useState('');
+
   useEffect(() => {
-    api.listUsers().then((u) => { setUsers(u); setLoading(false); });
+    api.listUsers()
+      .then((u) => { setUsers(u); })
+      .catch((err) => { setError(err instanceof Error ? err.message : 'Failed to load users'); })
+      .finally(() => { setLoading(false); });
   }, []);
 
   async function handleProvision(e: React.FormEvent) {
@@ -52,8 +57,12 @@ export default function AdminDashboard() {
 
   async function handleDelete(id: string) {
     if (!confirm('Delete this user? This cannot be undone.')) return;
-    await api.deleteUser(id);
-    setUsers((prev) => prev.filter((u) => u.id !== id));
+    try {
+      await api.deleteUser(id);
+      setUsers((prev) => prev.filter((u) => u.id !== id));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to delete user');
+    }
   }
 
   const roleLabel: Record<string, string> = { admin: 'Admin', lecturer: 'Lecturer', student: 'Student' };
@@ -189,6 +198,10 @@ export default function AdminDashboard() {
             </form>
           )}
         </div>
+      )}
+
+      {error && (
+        <div className="mb-4 rounded-lg bg-red-50 px-4 py-3 text-sm text-red-600">{error}</div>
       )}
 
       {/* Users table */}

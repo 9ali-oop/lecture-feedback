@@ -15,8 +15,13 @@ export default function LecturerDashboard() {
   const [formError, setFormError] = useState('');
   const [submitting, setSubmitting] = useState(false);
 
+  const [error, setError] = useState('');
+
   useEffect(() => {
-    api.listModules().then((m) => { setModules(m); setLoading(false); });
+    api.listModules()
+      .then((m) => { setModules(m); })
+      .catch((err) => { setError(err instanceof Error ? err.message : 'Failed to load modules'); })
+      .finally(() => { setLoading(false); });
   }, []);
 
   async function handleCreate(e: React.FormEvent) {
@@ -97,6 +102,10 @@ export default function LecturerDashboard() {
             </div>
           </form>
         </div>
+      )}
+
+      {error && (
+        <div className="mb-4 rounded-lg bg-red-50 px-4 py-3 text-sm text-red-600">{error}</div>
       )}
 
       {loading ? (

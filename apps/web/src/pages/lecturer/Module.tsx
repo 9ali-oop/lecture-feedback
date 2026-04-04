@@ -16,13 +16,17 @@ export default function LecturerModule() {
   const [uploadingFor, setUploadingFor] = useState<string | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
 
+  const [error, setError] = useState('');
+
   useEffect(() => {
     if (!moduleId) return;
-    api.listSessions(moduleId).then((s) => {
-      setSessions(s);
-      if (s[0]) setModuleName(`${s[0].moduleCode} — ${s[0].moduleName}`);
-      setLoading(false);
-    });
+    api.listSessions(moduleId)
+      .then((s) => {
+        setSessions(s);
+        if (s[0]) setModuleName(`${s[0].moduleCode} — ${s[0].moduleName}`);
+      })
+      .catch((err) => { setError(err instanceof Error ? err.message : 'Failed to load sessions'); })
+      .finally(() => { setLoading(false); });
   }, [moduleId]);
 
   async function handleCreate(e: React.FormEvent) {
@@ -45,17 +49,23 @@ export default function LecturerModule() {
       setSessions((prev) =>
         prev.map((s) => (s.id === sessionId ? { ...s, hasPdf: true } : s)),
       );
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to upload PDF');
     } finally {
       setUploadingFor(null);
     }
   }
 
   async function handleStart(sessionId: string) {
-    await api.startSession(sessionId);
-    setSessions((prev) =>
-      prev.map((s) => (s.id === sessionId ? { ...s, status: 'live' } : s)),
-    );
-    window.open(`/lecturer/live/${sessionId}`, '_blank', 'width=1280,height=800');
+    try {
+      await api.startSession(sessionId);
+      setSessions((prev) =>
+        prev.map((s) => (s.id === sessionId ? { ...s, status: 'live' } : s)),
+      );
+      window.open(`/lecturer/live/${sessionId}`, '_blank', 'width=1280,height=800');
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to start session');
+    }
   }
 
   const statusBadge: Record<string, string> = {
@@ -75,6 +85,10 @@ export default function LecturerModule() {
           + New session
         </button>
       </div>
+
+      {error && (
+        <div className="mb-4 rounded-lg bg-red-50 px-4 py-3 text-sm text-red-600">{error}</div>
+      )}
 
       {showForm && (
         <div className="mb-6 rounded-2xl bg-white p-6 shadow-sm ring-1 ring-gray-100">
