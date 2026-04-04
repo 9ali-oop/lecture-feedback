@@ -1,5 +1,6 @@
 import { BrowserRouter, Routes, Route, Navigate, useNavigate } from 'react-router-dom';
 import { AuthProvider, useAuth } from './contexts/AuthContext.tsx';
+import ErrorBoundary from './components/ErrorBoundary.tsx';
 import ProtectedRoute from './components/ProtectedRoute.tsx';
 import Login from './pages/Login.tsx';
 import Register from './pages/Register.tsx';
@@ -58,6 +59,7 @@ function RoleRouter() {
 
 export default function App() {
   return (
+    <ErrorBoundary>
     <AuthProvider>
       <BrowserRouter>
         <ImpersonationBanner />
@@ -84,5 +86,6 @@ export default function App() {
         </Routes>
       </BrowserRouter>
     </AuthProvider>
+    </ErrorBoundary>
   );
 }

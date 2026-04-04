@@ -586,6 +586,21 @@ export class SessionManager {
     const room = this.rooms.get(sessionId);
     if (!room) return;
 
+    // Flush current feedback to DB before removing
+    const student = room.students.get(userId);
+    if (student?.currentEmoji && student.emojiSelectedAt) {
+      const duration = Date.now() - student.emojiSelectedAt;
+      db.insert(feedbackEvents)
+        .values({
+          sessionId,
+          studentId: userId,
+          slideIndex: room.currentSlide,
+          emoji: student.currentEmoji,
+          durationMs: duration,
+        })
+        .catch(console.error);
+    }
+
     // If this student was the granted annotator, clear and notify
     if (room.grantedAnnotator?.studentId === userId) {
       room.grantedAnnotator = null;
