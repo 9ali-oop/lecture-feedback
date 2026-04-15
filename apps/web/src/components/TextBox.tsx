@@ -190,6 +190,31 @@ export default function TextBox({
         </div>
       )}
 
+      {/* Delete button */}
+      {selected && !editing && (
+        <button
+          className="absolute flex items-center justify-center rounded-full bg-red-600 text-white shadow-md hover:bg-red-500 transition-colors"
+          style={{
+            top: -12,
+            right: -12,
+            width: 22,
+            height: 22,
+            fontSize: 12,
+            lineHeight: 1,
+            zIndex: 30,
+            cursor: 'pointer',
+          }}
+          onMouseDown={(e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            onDelete();
+          }}
+          title="Delete text box"
+        >
+          &times;
+        </button>
+      )}
+
       {/* Resize handles */}
       {selected && handles.map(({ dir, style }) => (
         <div

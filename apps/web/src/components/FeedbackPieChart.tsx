@@ -3,6 +3,8 @@ import type { FeedbackDistribution } from '@lecture-feedback/shared';
 
 interface Props {
   distribution: FeedbackDistribution;
+  emptyLabel?: string;
+  dark?: boolean;
 }
 
 const COLORS = {
@@ -19,7 +21,7 @@ const LABELS = {
   lost: '😵 Lost',
 };
 
-export default function FeedbackPieChart({ distribution }: Props) {
+export default function FeedbackPieChart({ distribution, emptyLabel, dark }: Props) {
   const data = (['got_it', 'neutral', 'confused', 'lost'] as const)
     .filter((k) => distribution[k] > 0)
     .map((k) => ({
@@ -30,8 +32,8 @@ export default function FeedbackPieChart({ distribution }: Props) {
 
   if (distribution.total === 0) {
     return (
-      <div className="flex h-48 items-center justify-center text-sm text-gray-400">
-        Waiting for responses…
+      <div className={`flex h-48 items-center justify-center text-sm ${dark ? 'text-gray-500' : 'text-gray-400'}`}>
+        {emptyLabel ?? 'Waiting for responses...'}
       </div>
     );
   }
@@ -69,8 +71,8 @@ export default function FeedbackPieChart({ distribution }: Props) {
           return (
             <div key={k} className="flex items-center gap-2">
               <div className="h-2.5 w-2.5 rounded-full" style={{ background: COLORS[k] }} />
-              <span className="flex-1 text-xs text-gray-600">{LABELS[k]}</span>
-              <span className="text-xs font-semibold text-gray-900">{pct}%</span>
+              <span className={`flex-1 text-xs ${dark ? 'text-gray-400' : 'text-gray-600'}`}>{LABELS[k]}</span>
+              <span className={`text-xs font-semibold ${dark ? 'text-gray-200' : 'text-gray-900'}`}>{pct}%</span>
             </div>
           );
         })}

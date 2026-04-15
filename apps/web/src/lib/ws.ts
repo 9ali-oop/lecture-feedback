@@ -18,7 +18,6 @@ export class SessionSocket {
     const protocol = window.location.protocol === 'https:' ? 'wss' : 'ws';
     const host = window.location.host;
     const url = `${protocol}://${host}/ws?token=${encodeURIComponent(this.token)}&sessionId=${encodeURIComponent(this.sessionId)}`;
-
     this.ws = new WebSocket(url);
 
     this.ws.onopen = () => {

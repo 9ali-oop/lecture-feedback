@@ -67,21 +67,21 @@ export default function AdminDashboard() {
 
   const roleLabel: Record<string, string> = { admin: 'Admin', lecturer: 'Lecturer', student: 'Student' };
   const roleBadge: Record<string, string> = {
-    admin: 'bg-purple-100 text-purple-700',
-    lecturer: 'bg-blue-100 text-blue-700',
-    student: 'bg-green-100 text-green-700',
+    admin: 'bg-purple-100 dark:bg-purple-900/30 text-purple-700 dark:text-purple-300',
+    lecturer: 'bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300',
+    student: 'bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-300',
   };
 
   return (
     <Layout title="Admin">
-      <div className="mb-6 flex items-center justify-between">
+      <div className="mb-8 flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-bold text-gray-900">Users</h1>
-          <p className="mt-1 text-sm text-gray-500">{users.length} accounts</p>
+          <h1 className="text-2xl font-bold tracking-tight text-gray-900 dark:text-gray-100">Users</h1>
+          <p className="mt-1 text-sm text-gray-400 dark:text-gray-400">{users.length} accounts</p>
         </div>
         <button
           onClick={() => { setShowForm(true); setProvisioned(null); }}
-          className="rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-blue-700"
+          className="rounded-xl bg-blue-600 px-4 py-2.5 text-sm font-semibold text-white shadow-sm shadow-blue-600/20 transition hover:bg-blue-700 hover:shadow-md hover:shadow-blue-600/25"
         >
           + Add user
         </button>
@@ -89,59 +89,59 @@ export default function AdminDashboard() {
 
       {/* Provision form */}
       {showForm && (
-        <div className="mb-6 rounded-2xl bg-white p-6 shadow-sm ring-1 ring-gray-100">
+        <div className="mb-8 rounded-2xl bg-white dark:bg-gray-900 p-6 shadow-sm ring-1 ring-gray-100 dark:ring-gray-800">
           {provisioned ? (
             <div>
-              <h2 className="mb-4 text-lg font-semibold text-gray-900">Account created</h2>
-              <p className="mb-4 text-sm text-gray-600">
+              <h2 className="mb-4 text-lg font-semibold text-gray-900 dark:text-gray-100">Account created</h2>
+              <p className="mb-4 text-sm text-gray-600 dark:text-gray-400">
                 Share this QR code with <strong>{provisioned.user.email}</strong>. They must scan it
-                into an authenticator app, then visit <code className="text-blue-600">/register</code> to activate.
+                into an authenticator app, then visit <code className="text-blue-600 dark:text-blue-400">/register</code> to activate.
               </p>
-              <div className="mb-4 flex justify-center rounded-xl bg-gray-50 p-4">
+              <div className="mb-4 flex justify-center rounded-xl bg-gray-50 dark:bg-gray-800 p-4">
                 <img src={provisioned.qrCodeDataUrl} alt="TOTP QR code" className="h-48 w-48" />
               </div>
-              <p className="mb-4 text-center text-xs text-gray-400">
+              <p className="mb-4 text-center text-xs text-gray-400 dark:text-gray-400">
                 Manual key: <code className="font-mono">{provisioned.totpSecret}</code>
               </p>
               <button
                 onClick={() => setShowForm(false)}
-                className="w-full rounded-lg bg-gray-100 px-4 py-2 text-sm font-medium text-gray-700 transition hover:bg-gray-200"
+                className="w-full rounded-lg bg-gray-100 dark:bg-gray-800 px-4 py-2 text-sm font-medium text-gray-700 dark:text-gray-300 transition hover:bg-gray-200 dark:hover:bg-gray-700"
               >
                 Done
               </button>
             </div>
           ) : (
             <form onSubmit={handleProvision} className="space-y-4">
-              <h2 className="text-lg font-semibold text-gray-900">Add user</h2>
+              <h2 className="text-lg font-semibold text-gray-900 dark:text-gray-100">Add user</h2>
 
               <div className="grid grid-cols-2 gap-4">
                 <div>
-                  <label className="mb-1 block text-sm font-medium text-gray-700">Full name</label>
+                  <label className="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300">Full name</label>
                   <input
                     value={form.name}
                     onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))}
                     required
-                    className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
+                    className="w-full rounded-xl border border-gray-200 dark:border-gray-700 bg-gray-50/50 dark:bg-gray-800 px-3.5 py-2.5 text-sm text-gray-900 dark:text-gray-100 outline-none transition placeholder:text-gray-300 dark:placeholder:text-gray-600 focus:border-blue-500 dark:focus:border-blue-500 focus:bg-white dark:focus:bg-gray-800 focus:ring-2 focus:ring-blue-100 dark:focus:ring-blue-900/40"
                   />
                 </div>
                 <div>
-                  <label className="mb-1 block text-sm font-medium text-gray-700">Email</label>
+                  <label className="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300">Email</label>
                   <input
                     type="email"
                     value={form.email}
                     onChange={(e) => setForm((f) => ({ ...f, email: e.target.value }))}
                     required
-                    className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
+                    className="w-full rounded-xl border border-gray-200 dark:border-gray-700 bg-gray-50/50 dark:bg-gray-800 px-3.5 py-2.5 text-sm text-gray-900 dark:text-gray-100 outline-none transition placeholder:text-gray-300 dark:placeholder:text-gray-600 focus:border-blue-500 dark:focus:border-blue-500 focus:bg-white dark:focus:bg-gray-800 focus:ring-2 focus:ring-blue-100 dark:focus:ring-blue-900/40"
                   />
                 </div>
               </div>
 
               <div>
-                <label className="mb-1 block text-sm font-medium text-gray-700">Role</label>
+                <label className="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300">Role</label>
                 <select
                   value={form.role}
                   onChange={(e) => setForm((f) => ({ ...f, role: e.target.value as 'lecturer' | 'student' }))}
-                  className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
+                  className="w-full rounded-xl border border-gray-200 dark:border-gray-700 bg-gray-50/50 dark:bg-gray-800 px-3.5 py-2.5 text-sm text-gray-900 dark:text-gray-100 outline-none transition focus:border-blue-500 dark:focus:border-blue-500 focus:bg-white dark:focus:bg-gray-800 focus:ring-2 focus:ring-blue-100 dark:focus:ring-blue-900/40"
                 >
                   <option value="lecturer">Lecturer</option>
                   <option value="student">Student</option>
@@ -151,20 +151,20 @@ export default function AdminDashboard() {
               {form.role === 'student' && (
                 <div className="grid grid-cols-2 gap-4">
                   <div>
-                    <label className="mb-1 block text-sm font-medium text-gray-700">Student number</label>
+                    <label className="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300">Student number</label>
                     <input
                       value={form.studentNumber}
                       onChange={(e) => setForm((f) => ({ ...f, studentNumber: e.target.value }))}
                       required
-                      className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
+                      className="w-full rounded-xl border border-gray-200 dark:border-gray-700 bg-gray-50/50 dark:bg-gray-800 px-3.5 py-2.5 text-sm text-gray-900 dark:text-gray-100 outline-none transition placeholder:text-gray-300 dark:placeholder:text-gray-600 focus:border-blue-500 dark:focus:border-blue-500 focus:bg-white dark:focus:bg-gray-800 focus:ring-2 focus:ring-blue-100 dark:focus:ring-blue-900/40"
                     />
                   </div>
                   <div>
-                    <label className="mb-1 block text-sm font-medium text-gray-700">English proficiency</label>
+                    <label className="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300">English proficiency</label>
                     <select
                       value={form.englishProficiency}
                       onChange={(e) => setForm((f) => ({ ...f, englishProficiency: e.target.value as 'native' | 'fluent' | 'intermediate' | 'beginner' }))}
-                      className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
+                      className="w-full rounded-xl border border-gray-200 dark:border-gray-700 bg-gray-50/50 dark:bg-gray-800 px-3.5 py-2.5 text-sm text-gray-900 dark:text-gray-100 outline-none transition focus:border-blue-500 dark:focus:border-blue-500 focus:bg-white dark:focus:bg-gray-800 focus:ring-2 focus:ring-blue-100 dark:focus:ring-blue-900/40"
                     >
                       <option value="native">Native</option>
                       <option value="fluent">Fluent</option>
@@ -176,23 +176,23 @@ export default function AdminDashboard() {
               )}
 
               {formError && (
-                <p className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-600">{formError}</p>
+                <p className="rounded-lg bg-red-50 dark:bg-red-900/20 px-3 py-2 text-sm text-red-600 dark:text-red-400">{formError}</p>
               )}
 
-              <div className="flex gap-3">
+              <div className="flex gap-3 pt-2">
                 <button
                   type="button"
                   onClick={() => setShowForm(false)}
-                  className="flex-1 rounded-lg border border-gray-200 px-4 py-2 text-sm font-medium text-gray-600 transition hover:bg-gray-50"
+                  className="flex-1 rounded-xl border border-gray-200 dark:border-gray-700 px-4 py-2.5 text-sm font-medium text-gray-600 dark:text-gray-400 transition hover:bg-gray-50 dark:hover:bg-gray-800"
                 >
                   Cancel
                 </button>
                 <button
                   type="submit"
                   disabled={submitting}
-                  className="flex-1 rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-blue-700 disabled:opacity-50"
+                  className="flex-1 rounded-xl bg-blue-600 px-4 py-2.5 text-sm font-semibold text-white shadow-sm shadow-blue-600/20 transition hover:bg-blue-700 disabled:opacity-50"
                 >
-                  {submitting ? 'Creating…' : 'Create user'}
+                  {submitting ? 'Creating...' : 'Create user'}
                 </button>
               </div>
             </form>
@@ -201,7 +201,7 @@ export default function AdminDashboard() {
       )}
 
       {error && (
-        <div className="mb-4 rounded-lg bg-red-50 px-4 py-3 text-sm text-red-600">{error}</div>
+        <div className="mb-4 rounded-lg bg-red-50 dark:bg-red-900/20 px-4 py-3 text-sm text-red-600 dark:text-red-400">{error}</div>
       )}
 
       {/* Users table */}
@@ -210,25 +210,25 @@ export default function AdminDashboard() {
           <div className="h-6 w-6 animate-spin rounded-full border-4 border-blue-600 border-t-transparent" />
         </div>
       ) : (
-        <div className="rounded-2xl bg-white shadow-sm ring-1 ring-gray-100">
+        <div className="rounded-2xl bg-white dark:bg-gray-900 shadow-sm ring-1 ring-gray-100 dark:ring-gray-800 overflow-x-auto">
           {users.length === 0 ? (
-            <p className="p-8 text-center text-sm text-gray-400">No users yet.</p>
+            <p className="p-8 text-center text-sm text-gray-400 dark:text-gray-400">No users yet.</p>
           ) : (
-            <table className="w-full text-sm">
+            <table className="w-full text-sm min-w-[540px]">
               <thead>
-                <tr className="border-b border-gray-100">
-                  <th className="px-4 py-3 text-left font-medium text-gray-500">Name</th>
-                  <th className="px-4 py-3 text-left font-medium text-gray-500">Email</th>
-                  <th className="px-4 py-3 text-left font-medium text-gray-500">Role</th>
-                  <th className="px-4 py-3 text-left font-medium text-gray-500">Status</th>
+                <tr className="border-b border-gray-100 dark:border-gray-800">
+                  <th className="px-4 py-3 text-left font-medium text-gray-500 dark:text-gray-400">Name</th>
+                  <th className="px-4 py-3 text-left font-medium text-gray-500 dark:text-gray-400">Email</th>
+                  <th className="px-4 py-3 text-left font-medium text-gray-500 dark:text-gray-400">Role</th>
+                  <th className="px-4 py-3 text-left font-medium text-gray-500 dark:text-gray-400">Status</th>
                   <th className="px-4 py-3" />
                 </tr>
               </thead>
-              <tbody className="divide-y divide-gray-50">
+              <tbody className="divide-y divide-gray-50 dark:divide-gray-800">
                 {users.map((u) => (
-                  <tr key={u.id} className="transition hover:bg-gray-50">
-                    <td className="px-4 py-3 font-medium text-gray-900">{u.name}</td>
-                    <td className="px-4 py-3 text-gray-500">{u.email}</td>
+                  <tr key={u.id} className="transition hover:bg-gray-50 dark:hover:bg-gray-800">
+                    <td className="px-4 py-3 font-medium text-gray-900 dark:text-gray-100">{u.name}</td>
+                    <td className="px-4 py-3 text-gray-500 dark:text-gray-400">{u.email}</td>
                     <td className="px-4 py-3">
                       <span className={`rounded-full px-2.5 py-1 text-xs font-medium ${roleBadge[u.role]}`}>
                         {roleLabel[u.role]}
@@ -236,12 +236,18 @@ export default function AdminDashboard() {
                     </td>
                     <td className="px-4 py-3">
                       {u.totpVerified ? (
-                        <span className="text-green-600">Active</span>
+                        <span className="inline-flex items-center gap-1.5 text-xs font-medium text-green-600 dark:text-green-400">
+                          <span className="h-1.5 w-1.5 rounded-full bg-green-500" />
+                          Active
+                        </span>
                       ) : (
-                        <span className="text-amber-500">Pending setup</span>
+                        <span className="inline-flex items-center gap-1.5 text-xs font-medium text-amber-500 dark:text-amber-400">
+                          <span className="h-1.5 w-1.5 rounded-full bg-amber-400" />
+                          Pending
+                        </span>
                       )}
                     </td>
-                    <td className="px-4 py-3 text-right space-x-3">
+                    <td className="px-4 py-3 text-right space-x-2">
                       {u.role !== 'admin' && (
                         <>
                           <button
@@ -249,13 +255,13 @@ export default function AdminDashboard() {
                               await impersonate(u.id);
                               navigate(u.role === 'lecturer' ? '/lecturer' : '/student');
                             }}
-                            className="text-xs text-blue-500 transition hover:text-blue-700"
+                            className="rounded-lg px-2.5 py-1 text-xs font-medium text-blue-600 dark:text-blue-400 transition hover:bg-blue-50 dark:hover:bg-blue-900/30"
                           >
                             View as
                           </button>
                           <button
                             onClick={() => handleDelete(u.id)}
-                            className="text-xs text-red-400 transition hover:text-red-600"
+                            className="rounded-lg px-2.5 py-1 text-xs font-medium text-red-500 dark:text-red-400 transition hover:bg-red-50 dark:hover:bg-red-900/30"
                           >
                             Remove
                           </button>

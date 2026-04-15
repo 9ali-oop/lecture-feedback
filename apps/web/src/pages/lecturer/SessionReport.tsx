@@ -6,23 +6,34 @@ import SlideViewerModal from '../../components/SlideViewerModal.tsx';
 import { useAuth } from '../../contexts/AuthContext.tsx';
 import { api } from '../../lib/api.ts';
 import { AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer, ReferenceLine } from 'recharts';
-import type { SessionReport as Report, SlideReport, SlideNote, ConfusionHighlight, TimelineBucket, ReflectionSummary, SmartRecommendation } from '@lecture-feedback/shared';
+import EngagementGauge from '../../components/EngagementGauge.tsx';
+import type { SessionReport as Report, SlideReport, SlideNote, ConfusionHighlight, TimelineBucket, ReflectionSummary, SmartRecommendation, EngagementAnalytics } from '@lecture-feedback/shared';
 
 // ── Sub-components ──────────────────────────────────────────────────────────
 
 function SlideWhiteboard({ sessionId, slideIndex }: { sessionId: string; slideIndex: number }) {
   const [open, setOpen] = useState(false);
+  const [error, setError] = useState(false);
   const token = localStorage.getItem('token');
   const url = api.whiteboardUrl(sessionId, slideIndex);
   return (
-    <div className="mt-3 border-t border-gray-100 pt-3">
+    <div className="mt-3 border-t border-gray-100 dark:border-gray-800 pt-3">
       <button onClick={() => setOpen((v) => !v)}
-        className="flex items-center gap-1.5 text-xs font-medium text-amber-600 hover:text-amber-700">
+        className="flex items-center gap-1.5 text-xs font-medium text-amber-600 dark:text-amber-400 hover:text-amber-700 dark:hover:text-amber-300">
         <ChevronIcon open={open} /> Whiteboard notes
       </button>
       {open && (
-        <div className="mt-2 overflow-hidden rounded-lg border border-gray-200">
-          <img src={`${url}${token ? `?token=${token}` : ''}`} alt={`Whiteboard for slide ${slideIndex + 1}`} className="w-full" />
+        <div className="mt-2 overflow-hidden rounded-lg border border-gray-200 dark:border-gray-700">
+          {error ? (
+            <p className="p-4 text-center text-xs text-gray-400">No whiteboard saved for this slide</p>
+          ) : (
+            <img
+              src={`${url}${token ? `?token=${token}` : ''}`}
+              alt={`Whiteboard for slide ${slideIndex + 1}`}
+              className="w-full"
+              onError={() => setError(true)}
+            />
+          )}
         </div>
       )}
     </div>
@@ -33,21 +44,21 @@ function SlideQA({ slide }: { slide: SlideReport }) {
   const [open, setOpen] = useState(false);
   if (slide.questions.length === 0) return null;
   return (
-    <div className="mt-3 border-t border-gray-100 pt-3">
+    <div className="mt-3 border-t border-gray-100 dark:border-gray-800 pt-3">
       <button onClick={() => setOpen((v) => !v)}
-        className="flex items-center gap-1.5 text-xs font-medium text-blue-600 hover:text-blue-700">
+        className="flex items-center gap-1.5 text-xs font-medium text-blue-600 dark:text-blue-400 hover:text-blue-700 dark:hover:text-blue-300">
         <ChevronIcon open={open} />
         {slide.questions.length} question{slide.questions.length !== 1 ? 's' : ''}
       </button>
       {open && (
         <ul className="mt-2 space-y-2">
           {slide.questions.map((q) => (
-            <li key={q.id} className="rounded-lg bg-gray-50 px-3 py-2">
+            <li key={q.id} className="rounded-lg bg-gray-50 dark:bg-gray-800 px-3 py-2">
               <div className="flex items-start justify-between gap-2">
-                <p className="text-xs text-gray-800">{q.content}</p>
+                <p className="text-xs text-gray-800 dark:text-gray-200">{q.content}</p>
                 {q.answered
                   ? <span className="shrink-0 rounded-full bg-green-100 px-2 py-0.5 text-[10px] font-medium text-green-700">Answered</span>
-                  : <span className="shrink-0 rounded-full bg-yellow-100 px-2 py-0.5 text-[10px] font-medium text-yellow-700">Open</span>}
+                  : <span className="shrink-0 rounded-full bg-yellow-100 px-2 py-0.5 text-[10px] font-medium text-yellow-700">Unanswered</span>}
               </div>
               <p className="mt-0.5 text-[10px] text-gray-400">{q.studentName}</p>
             </li>
@@ -65,9 +76,9 @@ function SlideConfusionSection({ slide }: { slide: SlideReport }) {
   const withExplanation = contexts.filter((c) => c.explanation);
 
   return (
-    <div className="mt-3 border-t border-gray-100 pt-3">
+    <div className="mt-3 border-t border-gray-100 dark:border-gray-800 pt-3">
       <button onClick={() => setOpen((v) => !v)}
-        className="flex items-center gap-1.5 text-xs font-medium text-red-600 hover:text-red-700">
+        className="flex items-center gap-1.5 text-xs font-medium text-red-600 dark:text-red-400 hover:text-red-700 dark:hover:text-red-300">
         <ChevronIcon open={open} />
         {contexts.length} confusion report{contexts.length !== 1 ? 's' : ''}
       </button>
@@ -79,9 +90,9 @@ function SlideConfusionSection({ slide }: { slide: SlideReport }) {
           {withExplanation.length > 0 && (
             <ul className="space-y-1.5">
               {withExplanation.map((cc) => (
-                <li key={cc.id} className="rounded-lg bg-red-50 px-3 py-2">
+                <li key={cc.id} className="rounded-lg bg-red-50 dark:bg-red-900/20 px-3 py-2">
                   <div className="flex items-start justify-between gap-2">
-                    <p className="text-xs text-gray-800">{cc.explanation}</p>
+                    <p className="text-xs text-gray-800 dark:text-gray-200">{cc.explanation}</p>
                     <span className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] font-medium ${
                       cc.emoji === 'lost' ? 'bg-red-100 text-red-700' : 'bg-yellow-100 text-yellow-700'
                     }`}>
@@ -103,8 +114,8 @@ function SlideConfusionSection({ slide }: { slide: SlideReport }) {
 function ConfusionHeatmap({ highlights }: { highlights: ConfusionHighlight[] }) {
   if (highlights.length === 0) return null;
   return (
-    <div className="relative h-40 w-full overflow-hidden rounded-lg border border-gray-200 bg-gray-50">
-      <div className="absolute inset-0 text-center flex items-center justify-center text-[10px] text-gray-300 font-medium">
+    <div className="relative h-40 w-full overflow-hidden rounded-lg border border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800">
+      <div className="absolute inset-0 text-center flex items-center justify-center text-[10px] text-gray-300 dark:text-gray-600 font-medium">
         Confusion heatmap — darker = more students
       </div>
       {highlights.map((hl, i) => {
@@ -193,9 +204,16 @@ export default function SessionReport({ backUrl }: { backUrl?: string }) {
       .then((r) => { setReport(r); })
       .catch((err) => { setError(err instanceof Error ? err.message : 'Failed to load report'); })
       .finally(() => { setLoading(false); });
-    api.getTimeline(sessionId).then(setTimeline).catch(() => {});
-    api.getReflections(sessionId).then(setReflections).catch(() => {});
   }, [sessionId]);
+
+  // Only fetch lecturer-only data when the user is a lecturer/admin
+  useEffect(() => {
+    if (!sessionId || !user) return;
+    if (user.role === 'lecturer' || user.role === 'admin') {
+      api.getTimeline(sessionId).then(setTimeline).catch(() => {});
+      api.getReflections(sessionId).then(setReflections).catch(() => {});
+    }
+  }, [sessionId, user]);
 
   useEffect(() => {
     if (!sessionId || !user) return;
@@ -251,8 +269,9 @@ export default function SessionReport({ backUrl }: { backUrl?: string }) {
   }, [report, sortBy, filterConfusion, filterQuestions]);
 
   if (loading) {
+    const fallbackBack = backUrl ?? (user?.role === 'student' ? '/student' : '/lecturer');
     return (
-      <Layout title="Session report" back={backUrl}>
+      <Layout title="Session report" back={fallbackBack}>
         <div className="flex h-64 items-center justify-center">
           <div className="h-6 w-6 animate-spin rounded-full border-4 border-blue-600 border-t-transparent" />
         </div>
@@ -261,16 +280,17 @@ export default function SessionReport({ backUrl }: { backUrl?: string }) {
   }
 
   if (error) {
+    const fallbackBack = backUrl ?? (user?.role === 'student' ? '/student' : '/lecturer');
     return (
-      <Layout title="Session report" back={backUrl}>
-        <div className="rounded-lg bg-red-50 px-4 py-3 text-sm text-red-600">{error}</div>
+      <Layout title="Session report" back={fallbackBack}>
+        <div className="rounded-lg bg-red-50 dark:bg-red-900/20 px-4 py-3 text-sm text-red-600 dark:text-red-400">{error}</div>
       </Layout>
     );
   }
 
   if (!report) return null;
 
-  const { session, totalEnrolled, peakParticipants, slides, overallDistribution } = report;
+  const { session, totalEnrolled, peakParticipants, slides, overallDistribution, engagement } = report;
 
   const annotatedSlides = new Set(
     slides.filter((s) => s.hasAnnotation).map((s) => s.slideIndex),
@@ -290,22 +310,36 @@ export default function SessionReport({ backUrl }: { backUrl?: string }) {
     <Layout title="Session report" back={backUrl ?? `/lecturer/module/${session.moduleId}`}>
       {/* Header */}
       <div className="mb-8">
-        <div className="mb-1 text-sm text-gray-500">{session.moduleCode} · {session.moduleName}</div>
-        <h1 className="text-2xl font-bold text-gray-900">{session.title}</h1>
-        <div className="mt-2 flex gap-6 text-sm text-gray-500">
-          <span>{totalEnrolled} enrolled</span>
-          <span>{peakParticipants} attended</span>
+        <div className="mb-1 text-sm text-gray-400">{session.moduleCode} · {session.moduleName}</div>
+        <h1 className="text-2xl font-bold tracking-tight text-gray-900 dark:text-gray-100">{session.title}</h1>
+        <div className="mt-3 flex flex-wrap gap-2">
+          {isLecturer && (
+            <>
+              <span className="inline-flex items-center gap-1.5 rounded-lg bg-gray-100 dark:bg-gray-800 px-2.5 py-1 text-xs font-medium text-gray-600 dark:text-gray-400">
+                <svg className="h-3.5 w-3.5 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0z" /></svg>
+                {totalEnrolled} enrolled
+              </span>
+              <span className="inline-flex items-center gap-1.5 rounded-lg bg-gray-100 dark:bg-gray-800 px-2.5 py-1 text-xs font-medium text-gray-600 dark:text-gray-400">
+                <svg className="h-3.5 w-3.5 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
+                {peakParticipants} attended
+              </span>
+            </>
+          )}
           {session.startedAt && (
-            <span>{new Date(session.startedAt).toLocaleDateString('en-GB', { dateStyle: 'medium' })}</span>
+            <span className="inline-flex items-center gap-1.5 rounded-lg bg-gray-100 dark:bg-gray-800 px-2.5 py-1 text-xs font-medium text-gray-600 dark:text-gray-400">
+              <svg className="h-3.5 w-3.5 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" /></svg>
+              {new Date(session.startedAt).toLocaleDateString('en-GB', { dateStyle: 'medium' })}
+            </span>
           )}
         </div>
       </div>
 
       {/* Overall */}
-      <div className="mb-8 rounded-2xl bg-white p-6 shadow-sm ring-1 ring-gray-100">
-        <h2 className="mb-4 font-semibold text-gray-900">Overall understanding</h2>
-        <div className="grid grid-cols-2 gap-6">
-          <FeedbackPieChart distribution={overallDistribution} />
+      {isLecturer && (
+      <div className="mb-8 rounded-2xl bg-white dark:bg-gray-900 p-6 shadow-sm ring-1 ring-gray-100 dark:ring-gray-800">
+        <h2 className="mb-4 font-semibold text-gray-900 dark:text-gray-100">Overall understanding</h2>
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-6">
+          <FeedbackPieChart distribution={overallDistribution} emptyLabel="No feedback recorded" />
           <div className="flex flex-col justify-center space-y-3">
             {(['got_it', 'neutral', 'confused', 'lost'] as const).map((k) => {
               const pct = overallDistribution.total > 0
@@ -322,10 +356,10 @@ export default function SessionReport({ backUrl }: { backUrl?: string }) {
               return (
                 <div key={k}>
                   <div className="mb-1 flex justify-between text-xs">
-                    <span className="text-gray-600">{labels[k]}</span>
-                    <span className="font-semibold text-gray-900">{pct}%</span>
+                    <span className="text-gray-600 dark:text-gray-400">{labels[k]}</span>
+                    <span className="font-semibold text-gray-900 dark:text-gray-100">{pct}%</span>
                   </div>
-                  <div className="h-2 overflow-hidden rounded-full bg-gray-100">
+                  <div className="h-2 overflow-hidden rounded-full bg-gray-100 dark:bg-gray-800">
                     <div className={`h-full rounded-full transition-all ${colors[k]}`} style={{ width: `${pct}%` }} />
                   </div>
                 </div>
@@ -334,13 +368,69 @@ export default function SessionReport({ backUrl }: { backUrl?: string }) {
           </div>
         </div>
       </div>
+      )}
+
+      {/* Engagement Score (lecturer only) */}
+      {isLecturer && engagement && (
+        <div className="mb-8 grid grid-cols-1 sm:grid-cols-2 gap-6">
+          <div className="rounded-2xl bg-white dark:bg-gray-900 p-6 shadow-sm ring-1 ring-gray-100 dark:ring-gray-800">
+            <h2 className="mb-4 font-semibold text-gray-900 dark:text-gray-100">Engagement score</h2>
+            <EngagementGauge score={engagement.overallScore} />
+          </div>
+
+          {/* Signal comparison - research question */}
+          <div className="rounded-2xl bg-white dark:bg-gray-900 p-6 shadow-sm ring-1 ring-gray-100 dark:ring-gray-800">
+            <h2 className="mb-4 font-semibold text-gray-900 dark:text-gray-100">Signal analysis</h2>
+            <div className="space-y-2">
+              {engagement.signalComparison.map((sc) => (
+                <div key={sc.signalName} className="flex items-center gap-2">
+                  <span className="w-20 text-[11px] text-gray-500 dark:text-gray-400">{sc.signalName}</span>
+                  <div className="flex-1 flex items-center gap-1.5">
+                    <div className="flex-1 h-1.5 rounded-full bg-gray-100 dark:bg-gray-800 overflow-hidden">
+                      <div className="h-full rounded-full bg-blue-500" style={{ width: `${sc.soloScore}%` }} />
+                    </div>
+                    <span className="w-8 text-right text-[10px] font-medium text-gray-600 dark:text-gray-300 tabular-nums">{sc.soloScore}</span>
+                  </div>
+                  <span className="w-10 text-right text-[10px] text-gray-400 dark:text-gray-500 tabular-nums">r={sc.correlation}</span>
+                </div>
+              ))}
+            </div>
+            <div className="mt-3 rounded-lg bg-blue-50 dark:bg-blue-900/20 px-3 py-2">
+              <p className="text-[11px] text-blue-700 dark:text-blue-300">
+                Multi-signal composite ({engagement.overallScore.overall}) vs best single signal (
+                {Math.max(...engagement.signalComparison.map(s => s.soloScore))}
+                ): {engagement.overallScore.overall > Math.max(...engagement.signalComparison.map(s => s.soloScore))
+                  ? `+${engagement.overallScore.overall - Math.max(...engagement.signalComparison.map(s => s.soloScore))} points improvement`
+                  : 'comparable'
+                }
+              </p>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Proficiency Breakdown (lecturer only) */}
+      {isLecturer && engagement && engagement.proficiencyBreakdown.length > 1 && (
+        <div className="mb-8 rounded-2xl bg-white dark:bg-gray-900 p-6 shadow-sm ring-1 ring-gray-100 dark:ring-gray-800">
+          <h2 className="mb-4 font-semibold text-gray-900 dark:text-gray-100">Engagement by English proficiency</h2>
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+            {engagement.proficiencyBreakdown.map((p) => (
+              <div key={p.proficiency} className="rounded-xl bg-gray-50 dark:bg-gray-800 p-3 text-center">
+                <div className="text-2xl font-bold tabular-nums text-gray-900 dark:text-gray-100">{p.averageScore}</div>
+                <div className="mt-1 text-[11px] font-medium text-gray-500 dark:text-gray-400 capitalize">{p.proficiency}</div>
+                <div className="text-[10px] text-gray-400 dark:text-gray-500">{p.studentCount} student{p.studentCount !== 1 ? 's' : ''}</div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* Engagement Timeline */}
       {isLecturer && timeline.length > 0 && (
-        <div className="mb-8 rounded-2xl bg-white p-6 shadow-sm ring-1 ring-gray-100">
+        <div className="mb-8 rounded-2xl bg-white dark:bg-gray-900 p-6 shadow-sm ring-1 ring-gray-100 dark:ring-gray-800">
           <button onClick={() => setShowTimeline((v) => !v)}
             className="flex w-full items-center justify-between">
-            <h2 className="font-semibold text-gray-900">Engagement timeline</h2>
+            <h2 className="font-semibold text-gray-900 dark:text-gray-100">Engagement timeline</h2>
             <span className="text-xs text-gray-400">{showTimeline ? 'Hide' : 'Show'}</span>
           </button>
           {showTimeline && (
@@ -352,13 +442,16 @@ export default function SessionReport({ backUrl }: { backUrl?: string }) {
                   confusion: b.confusedPct,
                   responses: b.responseCount,
                   questions: b.questionCount,
+                  engagement: b.engagementScore,
                   slide: b.slideIndex,
                 }))}>
                   <XAxis dataKey="time" tick={{ fontSize: 10 }} interval="preserveStartEnd" />
                   <YAxis tick={{ fontSize: 10 }} domain={[0, 100]} />
                   <Tooltip contentStyle={{ fontSize: 11 }} formatter={(v: number, name: string) =>
-                    [name === 'confusion' ? `${v}%` : v, name === 'confusion' ? 'Confused/Lost %' : name === 'responses' ? 'Responses' : 'Questions']
+                    [name === 'confusion' ? `${v}%` : name === 'engagement' ? `${v}/100` : v,
+                     name === 'confusion' ? 'Confused/Lost %' : name === 'engagement' ? 'Engagement' : name === 'responses' ? 'Responses' : 'Questions']
                   } />
+                  <Area type="monotone" dataKey="engagement" stroke="#10b981" fill="#a7f3d0" strokeWidth={2} />
                   <Area type="monotone" dataKey="confusion" stroke="#ef4444" fill="#fecaca" strokeWidth={2} />
                   <Area type="monotone" dataKey="responses" stroke="#3b82f6" fill="#bfdbfe" strokeWidth={1} />
                   <Area type="monotone" dataKey="questions" stroke="#8b5cf6" fill="#ddd6fe" strokeWidth={1} />
@@ -371,7 +464,8 @@ export default function SessionReport({ backUrl }: { backUrl?: string }) {
                   ))}
                 </AreaChart>
               </ResponsiveContainer>
-              <div className="mt-2 flex justify-center gap-4 text-[10px] text-gray-500">
+              <div className="mt-2 flex flex-wrap justify-center gap-3 text-[10px] text-gray-500">
+                <span className="flex items-center gap-1"><span className="inline-block h-2 w-4 rounded bg-emerald-200 ring-1 ring-emerald-400" /> Engagement</span>
                 <span className="flex items-center gap-1"><span className="inline-block h-2 w-4 rounded bg-red-200 ring-1 ring-red-400" /> Confusion %</span>
                 <span className="flex items-center gap-1"><span className="inline-block h-2 w-4 rounded bg-blue-200 ring-1 ring-blue-400" /> Responses</span>
                 <span className="flex items-center gap-1"><span className="inline-block h-2 w-4 rounded bg-purple-200 ring-1 ring-purple-400" /> Questions</span>
@@ -384,8 +478,8 @@ export default function SessionReport({ backUrl }: { backUrl?: string }) {
 
       {/* Student Reflections */}
       {isLecturer && reflections && reflections.totalResponses > 0 && (
-        <div className="mb-8 rounded-2xl bg-white p-6 shadow-sm ring-1 ring-gray-100">
-          <h2 className="font-semibold text-gray-900">Student reflections</h2>
+        <div className="mb-8 rounded-2xl bg-white dark:bg-gray-900 p-6 shadow-sm ring-1 ring-gray-100 dark:ring-gray-800">
+          <h2 className="font-semibold text-gray-900 dark:text-gray-100">Student reflections</h2>
           <p className="mt-1 text-xs text-gray-500">{reflections.totalResponses} student{reflections.totalResponses !== 1 ? 's' : ''} submitted reflections</p>
 
           <div className="mt-4 grid grid-cols-2 gap-4">
@@ -395,17 +489,17 @@ export default function SessionReport({ backUrl }: { backUrl?: string }) {
               {reflections.topLearnings.length > 0 ? (
                 <div className="flex flex-wrap gap-1.5">
                   {reflections.topLearnings.map((phrase, i) => (
-                    <span key={i} className="rounded-full bg-green-50 px-2.5 py-1 text-xs text-green-700 ring-1 ring-green-200">{phrase}</span>
+                    <span key={i} className="rounded-full bg-green-50 dark:bg-green-900/30 px-2.5 py-1 text-xs text-green-700 dark:text-green-300 ring-1 ring-green-200 dark:ring-green-700">{phrase}</span>
                   ))}
                 </div>
               ) : (
                 <p className="text-xs text-gray-400 italic">No common themes detected</p>
               )}
               <details className="mt-3">
-                <summary className="cursor-pointer text-xs text-gray-500 hover:text-gray-700">View all responses</summary>
+                <summary className="cursor-pointer text-xs text-gray-500 hover:text-gray-700 dark:hover:text-gray-300">View all responses</summary>
                 <ul className="mt-2 space-y-1.5 max-h-48 overflow-y-auto">
                   {reflections.reflections.filter((r) => r.mostImportant).map((r) => (
-                    <li key={r.id} className="rounded-lg bg-gray-50 px-3 py-1.5 text-xs text-gray-700">{r.mostImportant}</li>
+                    <li key={r.id} className="rounded-lg bg-gray-50 dark:bg-gray-800 px-3 py-1.5 text-xs text-gray-700 dark:text-gray-300">{r.mostImportant}</li>
                   ))}
                 </ul>
               </details>
@@ -417,17 +511,17 @@ export default function SessionReport({ backUrl }: { backUrl?: string }) {
               {reflections.topUnclear.length > 0 ? (
                 <div className="flex flex-wrap gap-1.5">
                   {reflections.topUnclear.map((phrase, i) => (
-                    <span key={i} className="rounded-full bg-red-50 px-2.5 py-1 text-xs text-red-700 ring-1 ring-red-200">{phrase}</span>
+                    <span key={i} className="rounded-full bg-red-50 dark:bg-red-900/30 px-2.5 py-1 text-xs text-red-700 dark:text-red-300 ring-1 ring-red-200 dark:ring-red-700">{phrase}</span>
                   ))}
                 </div>
               ) : (
                 <p className="text-xs text-gray-400 italic">No common themes detected</p>
               )}
               <details className="mt-3">
-                <summary className="cursor-pointer text-xs text-gray-500 hover:text-gray-700">View all responses</summary>
+                <summary className="cursor-pointer text-xs text-gray-500 hover:text-gray-700 dark:hover:text-gray-300">View all responses</summary>
                 <ul className="mt-2 space-y-1.5 max-h-48 overflow-y-auto">
                   {reflections.reflections.filter((r) => r.stillUnclear).map((r) => (
-                    <li key={r.id} className="rounded-lg bg-gray-50 px-3 py-1.5 text-xs text-gray-700">{r.stillUnclear}</li>
+                    <li key={r.id} className="rounded-lg bg-gray-50 dark:bg-gray-800 px-3 py-1.5 text-xs text-gray-700 dark:text-gray-300">{r.stillUnclear}</li>
                   ))}
                 </ul>
               </details>
@@ -438,7 +532,7 @@ export default function SessionReport({ backUrl }: { backUrl?: string }) {
 
       {/* Sort/filter controls */}
       <div className="mb-4 flex flex-wrap items-center gap-3">
-        <h2 className="font-semibold text-gray-900">Slide-by-slide breakdown</h2>
+        <h2 className="font-semibold text-gray-900 dark:text-gray-100">Slide-by-slide breakdown</h2>
         <div className="flex-1" />
 
         {/* Sort */}
@@ -447,7 +541,7 @@ export default function SessionReport({ backUrl }: { backUrl?: string }) {
           <select
             value={sortBy}
             onChange={(e) => setSortBy(e.target.value as SortKey)}
-            className="rounded-lg border border-gray-200 bg-white px-2 py-1 text-xs text-gray-700 outline-none focus:border-blue-400 focus:ring-1 focus:ring-blue-100"
+            className="rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 px-2 py-1 text-xs text-gray-700 dark:text-gray-300 outline-none focus:border-blue-400 focus:ring-1 focus:ring-blue-100 dark:focus:ring-blue-800"
           >
             {SORT_OPTIONS.map((o) => (
               <option key={o.key} value={o.key}>{o.label}</option>
@@ -462,8 +556,8 @@ export default function SessionReport({ backUrl }: { backUrl?: string }) {
               onClick={() => setFilterConfusion((v) => !v)}
               className={`rounded-full px-2.5 py-1 text-[11px] font-medium transition ${
                 filterConfusion
-                  ? 'bg-red-100 text-red-700 ring-1 ring-red-300'
-                  : 'bg-gray-100 text-gray-500 hover:bg-gray-200'
+                  ? 'bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-300 ring-1 ring-red-300 dark:ring-red-700'
+                  : 'bg-gray-100 dark:bg-gray-800 text-gray-500 hover:bg-gray-200 dark:hover:bg-gray-700'
               }`}
             >
               Has confusion
@@ -472,8 +566,8 @@ export default function SessionReport({ backUrl }: { backUrl?: string }) {
               onClick={() => setFilterQuestions((v) => !v)}
               className={`rounded-full px-2.5 py-1 text-[11px] font-medium transition ${
                 filterQuestions
-                  ? 'bg-blue-100 text-blue-700 ring-1 ring-blue-300'
-                  : 'bg-gray-100 text-gray-500 hover:bg-gray-200'
+                  ? 'bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300 ring-1 ring-blue-300 dark:ring-blue-700'
+                  : 'bg-gray-100 dark:bg-gray-800 text-gray-500 hover:bg-gray-200 dark:hover:bg-gray-700'
               }`}
             >
               Has questions
@@ -492,27 +586,37 @@ export default function SessionReport({ backUrl }: { backUrl?: string }) {
           const hasData = slide.distribution.total > 0;
           const confusionAreaCount = slide.confusionContexts?.length ?? 0;
 
-          let borderColor = 'border-gray-100';
-          if (hasData && cp >= 10) borderColor = 'border-yellow-300';
-          if (hasData && gp >= 97.5) borderColor = 'border-green-300';
+          let borderColor = 'border-gray-100 dark:border-gray-800';
+          if (hasData && cp >= 10) borderColor = 'border-yellow-300 dark:border-yellow-700';
+          if (hasData && gp >= 97.5) borderColor = 'border-green-300 dark:border-green-700';
 
           return (
             <div key={slide.slideIndex}
-              className={`rounded-2xl border bg-white p-5 shadow-sm ${borderColor}`}>
+              className={`rounded-2xl border bg-white dark:bg-gray-900 p-5 shadow-sm ${borderColor}`}>
               <div className="flex items-start justify-between">
                 <div>
                   <div className="flex items-center gap-2">
-                    <span className="text-xs font-medium text-gray-400">Slide {slide.slideIndex + 1}</span>
+                    <span className="text-xs font-medium text-gray-400 dark:text-gray-500">Slide {slide.slideIndex + 1}</span>
+                    {isLecturer && slide.engagement && (
+                      <span className={`rounded-full px-1.5 py-0.5 text-[10px] font-semibold ${
+                        slide.engagement.overall >= 75 ? 'bg-emerald-100 dark:bg-emerald-900/30 text-emerald-700 dark:text-emerald-300' :
+                        slide.engagement.overall >= 50 ? 'bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300' :
+                        slide.engagement.overall >= 30 ? 'bg-amber-100 dark:bg-amber-900/30 text-amber-700 dark:text-amber-300' :
+                        'bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-300'
+                      }`}>
+                        {slide.engagement.overall}
+                      </span>
+                    )}
                     {confusionAreaCount > 0 && (
-                      <span className="rounded-full bg-red-100 px-1.5 py-0.5 text-[10px] font-semibold text-red-600">
+                      <span className="rounded-full bg-red-100 dark:bg-red-900/30 px-1.5 py-0.5 text-[10px] font-semibold text-red-600 dark:text-red-300">
                         {confusionAreaCount} area{confusionAreaCount !== 1 ? 's' : ''}
                       </span>
                     )}
                   </div>
                   {hasData && (
                     <div className="mt-1 flex gap-3 text-sm">
-                      <span className="font-semibold text-green-600">{gp}% got it</span>
-                      {cp > 0 && <span className="font-semibold text-red-500">{cp}% confused/lost</span>}
+                      <span className={`font-semibold ${gp >= 60 ? 'text-green-600 dark:text-green-400' : gp >= 30 ? 'text-yellow-600 dark:text-yellow-400' : 'text-red-500 dark:text-red-400'}`}>{gp}% got it</span>
+                      {cp > 0 && <span className="font-semibold text-red-500 dark:text-red-400">{cp}% confused/lost</span>}
                     </div>
                   )}
                 </div>
@@ -523,9 +627,9 @@ export default function SessionReport({ backUrl }: { backUrl?: string }) {
                   {hasData && <span>{slide.distribution.total} responses</span>}
                   <button
                     onClick={() => setViewerSlide(slide.slideIndex)}
-                    className="rounded-lg bg-blue-600/10 px-2.5 py-1 text-xs font-medium text-blue-500 transition hover:bg-blue-600/20 hover:text-blue-400"
+                    className="rounded-xl border border-gray-200 dark:border-gray-700 px-3 py-1 text-xs font-medium text-gray-600 dark:text-gray-400 transition hover:bg-gray-50 dark:hover:bg-gray-800 hover:border-gray-300 dark:hover:border-gray-600"
                   >
-                    View Slide
+                    View slide
                   </button>
                 </div>
               </div>
@@ -543,14 +647,14 @@ export default function SessionReport({ backUrl }: { backUrl?: string }) {
                       return w > 0 ? <div key={k} className={bg[k]} style={{ width: `${w}%` }} /> : null;
                     })}
                   </div>
-                  {/* Smart recommendations */}
-                  {slide.smartRecommendations && slide.smartRecommendations.length > 0 ? (
+                  {/* Smart recommendations (lecturer only) */}
+                  {isLecturer && slide.smartRecommendations && slide.smartRecommendations.length > 0 ? (
                     <div className="mt-3 space-y-1.5">
                       {slide.smartRecommendations.map((rec, i) => {
                         const colors = {
-                          critical: 'border-red-200 bg-red-50 text-red-800',
-                          warning: 'border-yellow-200 bg-yellow-50 text-yellow-800',
-                          info: 'border-blue-200 bg-blue-50 text-blue-800',
+                          critical: 'border-red-200 dark:border-red-800 bg-red-50 dark:bg-red-900/20 text-red-800 dark:text-red-300',
+                          warning: 'border-yellow-200 dark:border-yellow-800 bg-yellow-50 dark:bg-yellow-900/20 text-yellow-800 dark:text-yellow-300',
+                          info: 'border-blue-200 dark:border-blue-800 bg-blue-50 dark:bg-blue-900/20 text-blue-800 dark:text-blue-300',
                         };
                         const icons = { critical: '!', warning: '!', info: 'i' };
                         const iconBg = { critical: 'bg-red-500', warning: 'bg-yellow-500', info: 'bg-blue-500' };
@@ -569,9 +673,9 @@ export default function SessionReport({ backUrl }: { backUrl?: string }) {
                         );
                       })}
                     </div>
-                  ) : (
+                  ) : isLecturer ? (
                     <p className="mt-3 text-xs text-gray-500">{slide.recommendation}</p>
-                  )}
+                  ) : null}
                 </>
               )}
 
@@ -587,10 +691,10 @@ export default function SessionReport({ backUrl }: { backUrl?: string }) {
         })}
       </div>
 
-      <div className="mt-8 flex justify-center">
+      <div className="mt-10 flex justify-center">
         <button
           onClick={() => navigate(backUrl ?? `/lecturer/module/${session.moduleId}`)}
-          className="rounded-lg bg-blue-600 px-6 py-2.5 text-sm font-semibold text-white transition hover:bg-blue-700"
+          className="rounded-xl bg-blue-600 px-6 py-2.5 text-sm font-semibold text-white shadow-sm shadow-blue-600/20 transition hover:bg-blue-700 hover:shadow-md hover:shadow-blue-600/25"
         >
           Back to sessions
         </button>
@@ -599,7 +703,7 @@ export default function SessionReport({ backUrl }: { backUrl?: string }) {
       {viewerSlide !== null && report && (
         <SlideViewerModal
           sessionId={sessionId!}
-          totalSlides={report.session.totalSlides}
+          totalSlides={Math.max(report.session.totalSlides, report.slides.length)}
           initialSlide={viewerSlide}
           annotatedSlides={annotatedSlides}
           notes={reportNotes}

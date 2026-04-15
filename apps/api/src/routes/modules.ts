@@ -156,4 +156,50 @@ router.delete('/:id/enroll', requireAuth('student'), async (c) => {
   return c.json({ ok: true });
 });
 
+// Delete module and all its sessions
+router.delete('/:id', requireAuth('lecturer', 'admin'), async (c) => {
+  const { sub, role } = c.get('jwtPayload');
+  const { id } = c.req.param();
+
+  const mod = (await db.select().from(modules).where(eq(modules.id, id)))[0];
+  if (!mod) return c.json({ error: 'Module not found' }, 404);
+  if (role === 'lecturer' && mod.lecturerId !== sub) return c.json({ error: 'Forbidden' }, 403);
+
+  // Check for live sessions
+  const { sessions } = await import('../db/schema.js');
+  const liveSessions = await db.select({ id: sessions.id }).from(sessions)
+    .where(and(eq(sessions.moduleId, id), eq(sessions.status, 'live')));
+  if (liveSessions.length > 0) return c.json({ error: 'Cannot delete module with live sessions' }, 400);
+
+  // Delete all sessions in this module (reuse the session delete logic)
+  const allSessions = await db.select({ id: sessions.id }).from(sessions).where(eq(sessions.moduleId, id));
+  const { feedbackEvents, sessionParticipants, slideTimings, slideWhiteboards, slideAnnotations, slideNotes, confusionContexts, questions, questionUpvotes, polls, pollResponses, paceFeedback, reflections } = await import('../db/schema.js');
+
+  for (const sess of allSessions) {
+    const sid = sess.id;
+    await db.delete(feedbackEvents).where(eq(feedbackEvents.sessionId, sid));
+    await db.delete(sessionParticipants).where(eq(sessionParticipants.sessionId, sid));
+    await db.delete(slideTimings).where(eq(slideTimings.sessionId, sid));
+    await db.delete(slideWhiteboards).where(eq(slideWhiteboards.sessionId, sid));
+    await db.delete(slideAnnotations).where(eq(slideAnnotations.sessionId, sid));
+    await db.delete(slideNotes).where(eq(slideNotes.sessionId, sid));
+    await db.delete(confusionContexts).where(eq(confusionContexts.sessionId, sid));
+    const qs = await db.select({ id: questions.id }).from(questions).where(eq(questions.sessionId, sid));
+    for (const q of qs) await db.delete(questionUpvotes).where(eq(questionUpvotes.questionId, q.id));
+    await db.delete(questions).where(eq(questions.sessionId, sid));
+    const ps = await db.select({ id: polls.id }).from(polls).where(eq(polls.sessionId, sid));
+    for (const p of ps) await db.delete(pollResponses).where(eq(pollResponses.pollId, p.id));
+    await db.delete(polls).where(eq(polls.sessionId, sid));
+    await db.delete(paceFeedback).where(eq(paceFeedback.sessionId, sid));
+    await db.delete(reflections).where(eq(reflections.sessionId, sid));
+    await db.delete(sessions).where(eq(sessions.id, sid));
+  }
+
+  // Delete enrollments and the module itself
+  await db.delete(moduleEnrollments).where(eq(moduleEnrollments.moduleId, id));
+  await db.delete(modules).where(eq(modules.id, id));
+
+  return c.json({ ok: true });
+});
+
 export default router;

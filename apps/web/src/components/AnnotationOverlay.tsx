@@ -1,4 +1,4 @@
-import { useRef, useEffect } from 'react';
+import { useRef, useEffect, useState } from 'react';
 import type { LaserState, CursorState, IncomingStroke } from '../hooks/useAnnotationReceiver.ts';
 
 interface StoredAnnotation {
@@ -19,6 +19,7 @@ interface AnnotationOverlayProps {
   clearSlide: number;
   laserState: LaserState;
   cursorState: CursorState;
+  currentSlide: number;
 }
 
 function drawStrokeOnCanvas(
@@ -31,7 +32,7 @@ function drawStrokeOnCanvas(
   canvasWidth: number,
   canvasHeight: number,
 ) {
-  if (points.length < 2) return;
+  if (points.length === 0) return;
 
   if (type === 'erase') {
     ctx.globalCompositeOperation = 'destination-out';
@@ -44,12 +45,27 @@ function drawStrokeOnCanvas(
 
   ctx.lineCap = 'round';
   ctx.lineJoin = 'round';
-  ctx.beginPath();
-  ctx.moveTo(points[0].x * canvasWidth, points[0].y * canvasHeight);
-  for (let i = 1; i < points.length; i++) {
-    ctx.lineTo(points[i].x * canvasWidth, points[i].y * canvasHeight);
+
+  if (points.length === 1) {
+    // Single point: draw a filled dot so taps/short strokes are visible
+    const px = points[0].x * canvasWidth;
+    const py = points[0].y * canvasHeight;
+    ctx.beginPath();
+    ctx.arc(px, py, ctx.lineWidth / 2, 0, Math.PI * 2);
+    if (type === 'erase') {
+      ctx.fill();
+    } else {
+      ctx.fillStyle = color ?? '#e11d48';
+      ctx.fill();
+    }
+  } else {
+    ctx.beginPath();
+    ctx.moveTo(points[0].x * canvasWidth, points[0].y * canvasHeight);
+    for (let i = 1; i < points.length; i++) {
+      ctx.lineTo(points[i].x * canvasWidth, points[i].y * canvasHeight);
+    }
+    ctx.stroke();
   }
-  ctx.stroke();
   ctx.globalCompositeOperation = 'source-over';
 }
 
@@ -62,9 +78,10 @@ export default function AnnotationOverlay({
   clearSlide,
   laserState,
   cursorState,
+  currentSlide,
 }: AnnotationOverlayProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
-  const laserRingPhaseRef = useRef(0);
+  const [ringPhase, setRingPhase] = useState(0);
   const laserAnimRef = useRef<number | null>(null);
 
   // Full re-render on sync or clear
@@ -100,7 +117,7 @@ export default function AnnotationOverlay({
   // Pulsing ring animation for laser dwell
   useEffect(() => {
     if (!laserState.paused) {
-      laserRingPhaseRef.current = 0;
+      setRingPhase(0);
       if (laserAnimRef.current) {
         cancelAnimationFrame(laserAnimRef.current);
         laserAnimRef.current = null;
@@ -109,7 +126,7 @@ export default function AnnotationOverlay({
     }
 
     const animate = () => {
-      laserRingPhaseRef.current = (laserRingPhaseRef.current + 0.05) % (Math.PI * 2);
+      setRingPhase((p) => (p + 0.05) % (Math.PI * 2));
       laserAnimRef.current = requestAnimationFrame(animate);
     };
     laserAnimRef.current = requestAnimationFrame(animate);
@@ -118,14 +135,15 @@ export default function AnnotationOverlay({
     };
   }, [laserState.paused]);
 
+  const laserVisible = laserState.visible && laserState.slideIndex === currentSlide;
   const laserX = laserState.x * canvasWidth;
   const laserY = laserState.y * canvasHeight;
   const cursorX = cursorState.x * canvasWidth;
   const cursorY = cursorState.y * canvasHeight;
-  const ringScale = laserState.paused ? 1 + 0.3 * Math.sin(laserRingPhaseRef.current) : 0;
+  const ringScale = laserState.paused ? 1 + 0.3 * Math.sin(ringPhase) : 0;
 
   return (
-    <div className="absolute inset-0 pointer-events-none" style={{ width: canvasWidth, height: canvasHeight }}>
+    <div className="absolute inset-0 pointer-events-none" style={{ width: canvasWidth, height: canvasHeight, zIndex: 15 }}>
       <canvas
         ref={canvasRef}
         width={canvasWidth}
@@ -134,7 +152,7 @@ export default function AnnotationOverlay({
         style={{ width: canvasWidth, height: canvasHeight }}
       />
 
-      {laserState.visible && (
+      {laserVisible && (
         <div
           className="absolute pointer-events-none"
           style={{
@@ -142,6 +160,7 @@ export default function AnnotationOverlay({
             top: laserY - 22,
             width: 44,
             height: 44,
+            zIndex: 25,
           }}
         >
           <div
@@ -168,7 +187,7 @@ export default function AnnotationOverlay({
                 top: 22 - 18 * (1 + ringScale) / 2,
                 width: 18 * (1 + ringScale),
                 height: 18 * (1 + ringScale),
-                opacity: 0.6 + 0.4 * Math.sin(laserRingPhaseRef.current),
+                opacity: 0.6 + 0.4 * Math.sin(ringPhase),
                 transition: 'width 0.1s, height 0.1s',
               }}
             />
@@ -183,6 +202,7 @@ export default function AnnotationOverlay({
             left: cursorX,
             top: cursorY,
             transform: 'translate(-50%, -50%)',
+            zIndex: 25,
           }}
         >
           {cursorState.tool === 'pen' && (

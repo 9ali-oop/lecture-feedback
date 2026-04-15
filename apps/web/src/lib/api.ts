@@ -33,8 +33,10 @@ async function request<T>(
   }
 
   if (!res.ok) {
-    const err = await res.json().catch(() => ({ error: 'Request failed' }));
-    throw new Error((err as { error: string }).error ?? 'Request failed');
+    const err = await res.json().catch(() => ({
+      error: `Request failed (${res.status}${res.statusText ? ' ' + res.statusText : ''})`,
+    }));
+    throw new Error((err as { error: string }).error ?? `Request failed (${res.status})`);
   }
 
   if (res.status === 204) return undefined as T;
@@ -87,6 +89,9 @@ export const api = {
       body: JSON.stringify(body),
     }),
 
+  deleteModule: (id: string) =>
+    request<void>(`/modules/${id}`, { method: 'DELETE' }),
+
   updateModule: (id: string, body: { code?: string; name?: string; color?: string }) =>
     request<import('@lecture-feedback/shared').Module>(`/modules/${id}`, {
       method: 'PATCH',
@@ -127,6 +132,9 @@ export const api = {
   endSession: (id: string) =>
     request<void>(`/sessions/${id}/end`, { method: 'POST' }),
 
+  deleteSession: (id: string) =>
+    request<void>(`/sessions/${id}`, { method: 'DELETE' }),
+
   updateTotalSlides: (id: string, totalSlides: number) =>
     request<void>(`/sessions/${id}/slides`, {
       method: 'PATCH',
@@ -140,10 +148,10 @@ export const api = {
   listQuestions: (sessionId: string) =>
     request<import('@lecture-feedback/shared').Question[]>(`/questions/session/${sessionId}`),
 
-  askQuestion: (sessionId: string, content: string) =>
+  askQuestion: (sessionId: string, content: string, slideIndex?: number) =>
     request<import('@lecture-feedback/shared').Question>(`/questions/session/${sessionId}`, {
       method: 'POST',
-      body: JSON.stringify({ content }),
+      body: JSON.stringify({ content, slideIndex }),
     }),
 
   answerQuestion: (questionId: string) =>
@@ -176,7 +184,7 @@ export const api = {
     highlights: import('@lecture-feedback/shared').ConfusionHighlight[];
     explanation?: string;
   }) =>
-    request<{ id: string; questionId: string }>(`/confusion/session/${sessionId}`, {
+    request<{ id: string }>(`/confusion/session/${sessionId}`, {
       method: 'POST',
       body: JSON.stringify(data),
     }),

@@ -82,7 +82,7 @@ export function generateRecommendations(slide: SlideData): SmartRecommendation[]
       type: 'content',
       severity: 'critical',
       message: 'Over half the class was confused or lost on this slide. Consider splitting this into multiple slides with a gradual build-up, or adding a prerequisite recap slide before it.',
-      evidence: `${Math.round(confusedPct)}% confused/lost (${dist.confused + dist.lost}/${total} students)`,
+      evidence: `${Math.round(confusedPct)}% confused/lost (${dist.confused + dist.lost} of ${total} responses)`,
     });
   } else if (confusedPct >= 30) {
     recs.push({
@@ -121,7 +121,7 @@ export function generateRecommendations(slide: SlideData): SmartRecommendation[]
           type: 'content',
           severity: 'warning',
           message: `Students specifically highlighted ${regionLabels[topRegion.region] ?? topRegion.region} as confusing. Consider adding annotations, enlarging that element, or explaining it step-by-step.`,
-          evidence: `${allHighlights.length} highlight mark${allHighlights.length !== 1 ? 's' : ''}, concentrated in ${topRegion.region} (${topRegion.count} marks)`,
+          evidence: `${allHighlights.length} highlight mark${allHighlights.length !== 1 ? 's' : ''}, concentrated in ${topRegion.region} (${topRegion.count} mark${topRegion.count !== 1 ? 's' : ''})`,
         });
       }
     }

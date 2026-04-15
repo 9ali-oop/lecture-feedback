@@ -5,6 +5,10 @@ export default defineConfig({
   plugins: [react()],
   server: {
     port: 5173,
+    host: true,
+    // Allow tunnelled hosts (localtunnel, Cloudflare, ngrok) in dev so
+    // participant phones can reach the web app through a public URL.
+    allowedHosts: true,
     proxy: {
       '/api': {
         target: 'http://localhost:3000',

@@ -18,7 +18,7 @@ function drawStrokeOnCanvas(
   canvasWidth: number,
   canvasHeight: number,
 ) {
-  if (points.length < 2) return;
+  if (points.length === 0) return;
 
   if (type === 'erase') {
     ctx.globalCompositeOperation = 'destination-out';
@@ -31,12 +31,27 @@ function drawStrokeOnCanvas(
 
   ctx.lineCap = 'round';
   ctx.lineJoin = 'round';
-  ctx.beginPath();
-  ctx.moveTo(points[0].x * canvasWidth, points[0].y * canvasHeight);
-  for (let i = 1; i < points.length; i++) {
-    ctx.lineTo(points[i].x * canvasWidth, points[i].y * canvasHeight);
+
+  if (points.length === 1) {
+    // Single point: draw a filled dot so taps/short strokes are visible
+    const px = points[0].x * canvasWidth;
+    const py = points[0].y * canvasHeight;
+    ctx.beginPath();
+    ctx.arc(px, py, ctx.lineWidth / 2, 0, Math.PI * 2);
+    if (type === 'erase') {
+      ctx.fill();
+    } else {
+      ctx.fillStyle = color ?? '#e11d48';
+      ctx.fill();
+    }
+  } else {
+    ctx.beginPath();
+    ctx.moveTo(points[0].x * canvasWidth, points[0].y * canvasHeight);
+    for (let i = 1; i < points.length; i++) {
+      ctx.lineTo(points[i].x * canvasWidth, points[i].y * canvasHeight);
+    }
+    ctx.stroke();
   }
-  ctx.stroke();
   ctx.globalCompositeOperation = 'source-over';
 }
 

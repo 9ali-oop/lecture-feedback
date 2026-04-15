@@ -14,6 +14,7 @@ import type {
 import { db } from '../db/index.js';
 import { feedbackEvents, sessionParticipants, sessions, slideTimings } from '../db/schema.js';
 import { eq, and, isNull } from 'drizzle-orm';
+import { computeSlideEngagement } from '../lib/engagement.js';
 
 interface StudentState {
   ws: WSContext;
@@ -43,6 +44,11 @@ interface SessionRoom {
   annotationAccessQueue: AnnotationAccessRequest[];
   grantedAnnotator: { studentId: string; studentName: string } | null;
   paceFeedback: Map<string, PaceValue>; // studentId -> current pace value
+  // Engagement tracking
+  questionCounts: Map<number, number>;  // slideIndex -> count
+  confusionCounts: Map<number, number>; // slideIndex -> count
+  noteActivity: Map<number, Set<string>>; // slideIndex -> Set<studentId>
+  engagementTimer: ReturnType<typeof setInterval> | null;
 }
 
 function send(ws: WSContext, msg: WsServerMessage) {
@@ -69,9 +75,15 @@ function computeDistribution(room: SessionRoom): FeedbackDistribution {
 // Might need to swap this for Redis if we ever run multiple server instances.
 export class SessionManager {
   private rooms = new Map<string, SessionRoom>();
+  private dashboardClients = new Map<string, WSContext>(); // userId -> ws
+
+  hasRoom(sessionId: string): boolean {
+    return this.rooms.has(sessionId);
+  }
 
   private getOrCreate(sessionId: string): SessionRoom {
     if (!this.rooms.has(sessionId)) {
+      // Load current state from DB asynchronously - set defaults first, update after
       this.rooms.set(sessionId, {
         lecturerWs: null,
         lecturerUserId: null,
@@ -84,6 +96,10 @@ export class SessionManager {
         annotationAccessQueue: [],
         grantedAnnotator: null,
         paceFeedback: new Map(),
+        questionCounts: new Map(),
+        confusionCounts: new Map(),
+        noteActivity: new Map(),
+        engagementTimer: null,
       });
     }
     return this.rooms.get(sessionId)!;
@@ -102,10 +118,61 @@ export class SessionManager {
     }
   }
 
+  // ── Dashboard connections (students watching for live sessions) ──────────
+
+  joinDashboard(userId: string, ws: WSContext) {
+    // Same stale-close defence as joinAsStudent/joinAsLecturer: if the user
+    // already has a dashboard socket (e.g. StrictMode double-mount or the 3s
+    // auto-reconnect), close the old one so its late onClose becomes a no-op
+    // instead of wiping the fresh connection out of the map.
+    const existing = this.dashboardClients.get(userId);
+    if (existing && existing !== ws) {
+      try { existing.close(); } catch { /* already closed */ }
+    }
+    this.dashboardClients.set(userId, ws);
+  }
+
+  disconnectDashboard(userId: string, ws?: WSContext) {
+    const current = this.dashboardClients.get(userId);
+    // Identity guard — stale onClose from a superseded socket is a no-op.
+    if (ws && current && current !== ws) return;
+    this.dashboardClients.delete(userId);
+  }
+
+  notifySessionLive(sessionId: string, moduleId: string, title: string) {
+    const msg: WsServerMessage = { type: 'SESSION_LIVE', sessionId, moduleId, title };
+    for (const ws of this.dashboardClients.values()) {
+      send(ws, msg);
+    }
+  }
+
+  notifySessionEnded(sessionId: string) {
+    const msg: WsServerMessage = { type: 'SESSION_ENDED_DASHBOARD', sessionId };
+    for (const ws of this.dashboardClients.values()) {
+      send(ws, msg);
+    }
+  }
+
   async joinAsLecturer(sessionId: string, userId: string, ws: WSContext) {
     const room = this.getOrCreate(sessionId);
+
+    // If a previous lecturer socket is still registered (reconnect before its
+    // onClose fired), close it so the stale onClose becomes a guarded no-op
+    // instead of wiping out the fresh connection.
+    if (room.lecturerWs && room.lecturerWs !== ws) {
+      try { room.lecturerWs.close(); } catch { /* already closed */ }
+    }
+
     room.lecturerWs = ws;
     room.lecturerUserId = userId;
+
+    // Sync room state from DB (in case server restarted)
+    const [sess] = await db.select({ currentSlideIndex: sessions.currentSlideIndex, totalSlides: sessions.totalSlides })
+      .from(sessions).where(eq(sessions.id, sessionId));
+    if (sess) {
+      room.currentSlide = sess.currentSlideIndex;
+      room.totalSlides = sess.totalSlides;
+    }
 
     // Start timing for the current slide
     await db.insert(slideTimings).values({
@@ -129,6 +196,51 @@ export class SessionManager {
 
     // Send annotation access state (for reconnection)
     this.sendAnnotationAccessState(room);
+
+    // Notify students that the lecturer has reconnected
+    this.broadcastToStudents(room, { type: 'LECTURER_RECONNECTED' });
+
+    // Start engagement scoring timer (every 10 seconds)
+    this.startEngagementTimer(sessionId, room);
+  }
+
+  private startEngagementTimer(sessionId: string, room: SessionRoom) {
+    if (room.engagementTimer) clearInterval(room.engagementTimer);
+    room.engagementTimer = setInterval(() => {
+      if (!room.lecturerWs) return;
+
+      // Always keep participant count in sync
+      send(room.lecturerWs, {
+        type: 'PARTICIPANT_COUNT',
+        active: room.students.size,
+        total: room.students.size,
+      });
+
+      if (room.students.size === 0) return;
+
+      const dist = computeDistribution(room);
+      // Don't broadcast engagement if no one has voted on current slide yet
+      if (dist.total === 0) return;
+      const paceDist = { slow: 0, ok: 0, fast: 0, total: 0 };
+      for (const v of room.paceFeedback.values()) {
+        paceDist[v]++;
+        paceDist.total++;
+      }
+      const eng = computeSlideEngagement({
+        distribution: dist,
+        paceDistribution: paceDist,
+        questionCount: room.questionCounts.get(room.currentSlide) ?? 0,
+        confusionReports: room.confusionCounts.get(room.currentSlide) ?? 0,
+        studentsWithNotes: room.noteActivity.get(room.currentSlide)?.size ?? 0,
+        participantCount: room.students.size,
+      });
+      send(room.lecturerWs, {
+        type: 'ENGAGEMENT_UPDATE',
+        score: eng.overall,
+        signals: eng.signals,
+        slideIndex: room.currentSlide,
+      });
+    }, 10_000);
   }
 
   async joinAsStudent(
@@ -138,6 +250,28 @@ export class SessionManager {
     ws: WSContext,
   ) {
     const room = this.getOrCreate(sessionId);
+
+    // Sync room state from DB (in case server restarted)
+    if (room.totalSlides === 0) {
+      const [sess] = await db.select({ currentSlideIndex: sessions.currentSlideIndex, totalSlides: sessions.totalSlides })
+        .from(sessions).where(eq(sessions.id, sessionId));
+      if (sess) {
+        room.currentSlide = sess.currentSlideIndex;
+        room.totalSlides = sess.totalSlides;
+      }
+    }
+
+    // If the same student already has a live socket (e.g. flaky network
+    // triggered a reconnect before the old socket's onClose fired, or a
+    // duplicate tab), close the stale one. Without this the old socket's
+    // eventual onClose would evict the student from the room even though
+    // their new socket is still connected — causing the active-user count
+    // to flicker down and silently dropping their feedback.
+    const existing = room.students.get(userId);
+    if (existing && existing.ws !== ws) {
+      try { existing.ws.close(); } catch { /* already closed */ }
+    }
+
     room.students.set(userId, {
       ws,
       userId,
@@ -147,8 +281,14 @@ export class SessionManager {
       slideIndex: room.currentSlide,
     });
 
-    // Record participation in DB
-    await db.insert(sessionParticipants).values({ sessionId, studentId: userId }).onConflictDoNothing();
+    // Record participation in DB. If the session or user was deleted between
+    // the WS handshake and here (e.g. dev cleanup, test teardown, or a bug),
+    // we swallow the FK error so the process doesn't crash.
+    try {
+      await db.insert(sessionParticipants).values({ sessionId, studentId: userId }).onConflictDoNothing();
+    } catch (err) {
+      console.warn(`[session-manager] could not record participation for ${userId} in ${sessionId}:`, (err as Error).message);
+    }
 
     // Send current slide to student
     send(ws, {
@@ -178,9 +318,22 @@ export class SessionManager {
     const room = this.rooms.get(sessionId);
     if (!room) return;
 
+    // Clamp to a valid range. Without this, a buggy client can persist an
+    // out-of-range slideIndex (e.g. "slide 8 on a 5-slide deck") which then
+    // corrupts per-slide feedback analytics. If totalSlides is 0 (no PDF yet),
+    // we have nothing to clamp against, so only guard against negatives.
+    const clamped = room.totalSlides > 0
+      ? Math.max(0, Math.min(slideIndex, room.totalSlides - 1))
+      : Math.max(0, slideIndex);
+
+    // Persist the clamped value (fire-and-forget — errors are logged only).
+    // Single source of truth: callers should NOT also write to the DB.
+    db.update(sessions).set({ currentSlideIndex: clamped }).where(eq(sessions.id, sessionId)).catch(console.error);
+
     const prevSlide = room.currentSlide;
     const now = new Date();
-    room.currentSlide = slideIndex;
+    room.currentSlide = clamped;
+    slideIndex = clamped;
 
     // Close timing for previous slide, open timing for new slide
     db.update(slideTimings)
@@ -270,6 +423,8 @@ export class SessionManager {
   handleNewQuestion(sessionId: string, question: Question) {
     const room = this.rooms.get(sessionId);
     if (!room?.lecturerWs) return;
+    // Track question count for engagement scoring
+    room.questionCounts.set(room.currentSlide, (room.questionCounts.get(room.currentSlide) ?? 0) + 1);
     send(room.lecturerWs, { type: 'NEW_QUESTION', question });
   }
 
@@ -333,10 +488,32 @@ export class SessionManager {
     this.broadcastToStudents(room, msg);
   }
 
+  handleTextBoxSync(sessionId: string, slideIndex: number, textBoxes: Array<{ id: string; x: number; y: number; width: number; height: number; content: string; fontFamily: string; fontSize: number; color: string }>) {
+    const room = this.rooms.get(sessionId);
+    if (!room) return;
+    this.broadcastToStudents(room, { type: 'TEXT_BOX_SYNC', slideIndex, textBoxes });
+  }
+
+  handleWhiteboardToggle(sessionId: string, enabled: boolean) {
+    const room = this.rooms.get(sessionId);
+    if (!room) return;
+    this.broadcastToStudents(room, { type: 'WHITEBOARD_TOGGLE', enabled });
+  }
+
   handleConfusionArea(sessionId: string, slideIndex: number, highlight: { shape: 'rect' | 'circle'; x: number; y: number; width: number; height: number }, emoji: 'confused' | 'lost') {
     const room = this.rooms.get(sessionId);
     if (!room?.lecturerWs) return;
+    // Track confusion count for engagement scoring
+    room.confusionCounts.set(slideIndex, (room.confusionCounts.get(slideIndex) ?? 0) + 1);
     send(room.lecturerWs, { type: 'CONFUSION_AREA', slideIndex, highlight, emoji });
+  }
+
+  /** Track note activity for engagement scoring */
+  trackNoteActivity(sessionId: string, studentId: string, slideIndex: number) {
+    const room = this.rooms.get(sessionId);
+    if (!room) return;
+    if (!room.noteActivity.has(slideIndex)) room.noteActivity.set(slideIndex, new Set());
+    room.noteActivity.get(slideIndex)!.add(studentId);
   }
 
   setTotalSlides(sessionId: string, totalSlides: number) {
@@ -542,12 +719,13 @@ export class SessionManager {
     if (!room) return;
 
     if (room.autoEndTimer) clearTimeout(room.autoEndTimer);
+    if (room.engagementTimer) clearInterval(room.engagementTimer);
 
     // Revoke annotation access before ending
     this.revokeAllAnnotationAccess(room, 'session_ended');
 
-    // Flush remaining feedback
-    this.flushFeedback(sessionId, room, room.currentSlide);
+    // Flush remaining feedback (await to ensure DB writes complete before room cleanup)
+    await this.flushFeedback(sessionId, room, room.currentSlide);
 
     // Close any open slide timings
     await db
@@ -573,6 +751,9 @@ export class SessionManager {
       send(student.ws, endMsg);
     }
 
+    // Notify dashboard clients so the live banner disappears
+    this.notifySessionEnded(sessionId);
+
     this.rooms.delete(sessionId);
   }
 
@@ -582,12 +763,18 @@ export class SessionManager {
     room.autoEndTimer = setTimeout(() => this.endSession(sessionId), minutes * 60 * 1000);
   }
 
-  disconnectStudent(sessionId: string, userId: string) {
+  disconnectStudent(sessionId: string, userId: string, ws?: WSContext) {
     const room = this.rooms.get(sessionId);
     if (!room) return;
 
     // Flush current feedback to DB before removing
     const student = room.students.get(userId);
+
+    // Identity guard: if this onClose is for a stale WS that has already been
+    // superseded by a reconnect, do nothing. Evicting the current entry would
+    // drop the student from the room even though their new socket is live.
+    if (ws && student && student.ws !== ws) return;
+
     if (student?.currentEmoji && student.emojiSelectedAt) {
       const duration = Date.now() - student.emojiSelectedAt;
       db.insert(feedbackEvents)
@@ -625,11 +812,20 @@ export class SessionManager {
     }
   }
 
-  disconnectLecturer(sessionId: string) {
+  disconnectLecturer(sessionId: string, ws?: WSContext) {
     const room = this.rooms.get(sessionId);
     if (!room) return;
+
+    // Identity guard: a stale onClose from a superseded socket must not wipe
+    // out the fresh lecturer connection or spuriously tell students the
+    // lecturer has disconnected.
+    if (ws && room.lecturerWs && room.lecturerWs !== ws) return;
+
     room.lecturerWs = null;
     room.lecturerUserId = null;
+
+    // Notify students that the lecturer has disconnected
+    this.broadcastToStudents(room, { type: 'LECTURER_DISCONNECTED' });
   }
 
   isGrantedAnnotator(sessionId: string, userId: string): boolean {
@@ -667,6 +863,10 @@ export class SessionManager {
     if (room.lecturerWs) {
       send(room.lecturerWs, { type: 'ANNOTATION_ACCESS_REQUESTED', studentId, studentName, reason: trimmed });
     }
+    // Also push the full access state so the lecturer UI stays authoritative
+    // when multiple requests are in flight (e.g. two students tap "request pen"
+    // within the same tick) or the client reconnected mid-queue.
+    this.sendAnnotationAccessState(room);
   }
 
   handleAnnotationAccessCancel(sessionId: string, studentId: string) {
@@ -702,6 +902,17 @@ export class SessionManager {
       room.annotationAccessQueue = room.annotationAccessQueue.filter((r) => r.studentId !== studentId);
       this.sendAnnotationAccessState(room);
       return;
+    }
+
+    // If a different student currently has the pen, revoke theirs first so
+    // their client clears its annotation toolbar + any in-flight stroke batch.
+    // Without this the previous grantee thinks they're still granted, but the
+    // backend silently drops their strokes (isGrantedAnnotator check fails).
+    if (room.grantedAnnotator && room.grantedAnnotator.studentId !== studentId) {
+      const prev = room.students.get(room.grantedAnnotator.studentId);
+      if (prev) send(prev.ws, { type: 'ANNOTATION_ACCESS_REVOKED', reason: 'lecturer_revoked' });
+      // Clear any strokes the previous annotator had drawn on the current slide
+      this.broadcastToAll(room, { type: 'STUDENT_CLEAR_ANNOTATIONS', slideIndex: room.currentSlide });
     }
 
     room.grantedAnnotator = { studentId, studentName: student.name };
@@ -752,22 +963,26 @@ export class SessionManager {
     room.annotationAccessQueue = [];
   }
 
-  private flushFeedback(sessionId: string, room: SessionRoom, slideIndex: number) {
+  private async flushFeedback(sessionId: string, room: SessionRoom, slideIndex: number) {
     const now = Date.now();
+    const inserts = [];
     for (const student of room.students.values()) {
       if (student.currentEmoji && student.emojiSelectedAt) {
         const duration = now - student.emojiSelectedAt;
-        db.insert(feedbackEvents)
-          .values({
-            sessionId,
-            studentId: student.userId,
-            slideIndex,
-            emoji: student.currentEmoji,
-            durationMs: duration,
-          })
-          .catch(console.error);
+        inserts.push(
+          db.insert(feedbackEvents)
+            .values({
+              sessionId,
+              studentId: student.userId,
+              slideIndex,
+              emoji: student.currentEmoji,
+              durationMs: duration,
+            })
+            .catch(console.error),
+        );
       }
     }
+    await Promise.all(inserts);
   }
 }
 

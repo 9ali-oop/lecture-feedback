@@ -83,6 +83,7 @@ export interface Session {
   startedAt: string | null;
   endedAt: string | null;
   createdAt: string;
+  participated?: boolean;
 }
 
 export interface Question {
@@ -155,6 +156,7 @@ export interface TimelineBucket {
   paceSlow: number;
   paceOk: number;
   paceFast: number;
+  engagementScore: number | null; // 0-100 composite, null if no data in this bucket
 }
 
 // ── Post-lecture reflections ─────────────────────────────────────────────────
@@ -197,6 +199,49 @@ export interface ModuleAnalytics {
   totalSessions: number;
   classAverageEngagement: number;
   students: StudentEngagement[];
+}
+
+// ── Engagement scoring ──────────────────────────────────────────────────────
+
+/** Individual signal sub-scores (0-100 each, null if no data for that signal) */
+export interface EngagementSignals {
+  emoji: number | null;
+  pace: number | null;
+  questions: number | null;
+  confusion: number | null;
+  notes: number | null;
+}
+
+/** Composite engagement score for a slide or session */
+export interface EngagementScore {
+  overall: number;              // 0-100 weighted composite
+  signals: EngagementSignals;
+  participantCount: number;
+}
+
+/** Engagement segmented by English proficiency level */
+export interface ProficiencyEngagement {
+  proficiency: EnglishProficiency;
+  studentCount: number;
+  averageScore: number;
+  signals: EngagementSignals;
+}
+
+/** Single-signal vs multi-signal comparison (for research question) */
+export interface SignalComparison {
+  signalName: string;
+  weight: number;
+  soloScore: number;            // engagement if using only this signal
+  contribution: number;         // weighted contribution to composite
+  correlation: number;          // Pearson r with composite (-1 to 1)
+}
+
+/** Full engagement analytics block for the session report */
+export interface EngagementAnalytics {
+  overallScore: EngagementScore;
+  perSlide: Array<{ slideIndex: number; engagement: EngagementScore }>;
+  signalComparison: SignalComparison[];
+  proficiencyBreakdown: ProficiencyEngagement[];
 }
 
 // ── Smart recommendations ───────────────────────────────────────────────────
@@ -255,6 +300,7 @@ export interface SlideReport {
   hasWhiteboard: boolean;
   hasAnnotation: boolean;
   confusionContexts: ConfusionContext[];
+  engagement?: EngagementScore;
 }
 
 export interface SessionReport {
@@ -263,6 +309,7 @@ export interface SessionReport {
   peakParticipants: number;
   slides: SlideReport[];
   overallDistribution: FeedbackDistribution;
+  engagement?: EngagementAnalytics;
 }
 
 // ── Annotation types ─────────────────────────────────────────────────────────
@@ -319,7 +366,9 @@ export type WsClientMessage =
   | { type: 'ANNOTATION_ACCESS_CANCEL' }
   | { type: 'ANNOTATION_ACCESS_GRANT'; studentId: string }
   | { type: 'ANNOTATION_ACCESS_DISMISS'; studentId: string }
-  | { type: 'ANNOTATION_ACCESS_REVOKE' };
+  | { type: 'ANNOTATION_ACCESS_REVOKE' }
+  | { type: 'WHITEBOARD_TOGGLE'; enabled: boolean }
+  | { type: 'TEXT_BOX_SYNC'; slideIndex: number; textBoxes: Array<{ id: string; x: number; y: number; width: number; height: number; content: string; fontFamily: string; fontSize: number; color: string }> };
 
 export type WsServerMessage =
   | { type: 'SLIDE_UPDATE'; slideIndex: number; totalSlides: number }
@@ -332,8 +381,11 @@ export type WsServerMessage =
   | { type: 'POLL_RESULTS'; results: PollResults }
   | { type: 'POLL_CLOSED'; pollId: string; results: PollResults }
   | { type: 'PACE_UPDATE'; distribution: PaceDistribution }
+  | { type: 'ENGAGEMENT_UPDATE'; score: number; signals: EngagementSignals; slideIndex: number }
   | { type: 'QUESTION_UPVOTED'; questionId: string; upvoteCount: number }
   | { type: 'SESSION_ENDED' }
+  | { type: 'LECTURER_DISCONNECTED' }
+  | { type: 'LECTURER_RECONNECTED' }
   | { type: 'PONG' }
   | { type: 'ERROR'; message: string }
   | DrawStrokeMessage
@@ -352,7 +404,11 @@ export type WsServerMessage =
   | { type: 'ANNOTATION_ACCESS_STATE'; grantedStudent: { id: string; name: string } | null; queue: Array<{ studentId: string; studentName: string; reason: string }> }
   | { type: 'STUDENT_DRAW_STROKE'; studentName: string; points: Array<{ x: number; y: number }>; color: string; width: number; slideIndex: number }
   | { type: 'STUDENT_ERASE_STROKE'; studentName: string; points: Array<{ x: number; y: number }>; size: number; slideIndex: number }
-  | { type: 'STUDENT_CLEAR_ANNOTATIONS'; slideIndex: number };
+  | { type: 'STUDENT_CLEAR_ANNOTATIONS'; slideIndex: number }
+  | { type: 'WHITEBOARD_TOGGLE'; enabled: boolean }
+  | { type: 'SESSION_LIVE'; sessionId: string; moduleId: string; title: string }
+  | { type: 'SESSION_ENDED_DASHBOARD'; sessionId: string }
+  | { type: 'TEXT_BOX_SYNC'; slideIndex: number; textBoxes: Array<{ id: string; x: number; y: number; width: number; height: number; content: string; fontFamily: string; fontSize: number; color: string }> };
 
 // ── API request/response shapes ───────────────────────────────────────────────
 

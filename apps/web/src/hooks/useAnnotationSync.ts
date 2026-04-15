@@ -43,7 +43,9 @@ export function useAnnotationSync({ socket, slideIndex, canvasWidth, canvasHeigh
           width: normalizeDim(currentDrawPropsRef.current.width),
           slideIndex,
         });
-        drawBatchRef.current = [];
+        // Keep last point so the next batch connects seamlessly
+        const lastPoint = drawBatchRef.current[drawBatchRef.current.length - 1];
+        drawBatchRef.current = [lastPoint];
       }
     }, 50);
   }, [socket, slideIndex, normalizeDim]);
@@ -83,7 +85,9 @@ export function useAnnotationSync({ socket, slideIndex, canvasWidth, canvasHeigh
           size: normalizeDim(currentEraseSizeRef.current),
           slideIndex,
         });
-        eraseBatchRef.current = [];
+        // Keep last point so the next batch connects seamlessly
+        const lastPoint = eraseBatchRef.current[eraseBatchRef.current.length - 1];
+        eraseBatchRef.current = [lastPoint];
       }
     }, 50);
   }, [socket, slideIndex, normalizeDim]);

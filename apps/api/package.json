@@ -7,7 +7,9 @@
     "build": "tsc",
     "db:push": "sh -c 'set -a; . ./.env; set +a; exec drizzle-kit push'",
     "db:seed": "sh -c 'set -a; . ./.env; set +a; exec tsx src/db/seed.ts'",
-    "db:studio": "drizzle-kit studio"
+    "db:studio": "drizzle-kit studio",
+    "test": "vitest run",
+    "test:watch": "vitest"
   },
   "dependencies": {
     "@hono/node-server": "^1.13.7",
@@ -28,8 +30,11 @@
     "@types/node": "^22.14.0",
     "@types/pg": "^8.11.13",
     "@types/qrcode": "^1.5.5",
+    "@types/ws": "^8.18.1",
     "drizzle-kit": "^0.30.6",
     "tsx": "^4.19.3",
-    "typescript": "^5.4.5"
+    "typescript": "^5.4.5",
+    "vitest": "^2.1.9",
+    "ws": "^8.20.0"
   }
 }

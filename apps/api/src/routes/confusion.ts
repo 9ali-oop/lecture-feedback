@@ -3,7 +3,7 @@ import { zValidator } from '@hono/zod-validator';
 import { z } from 'zod';
 import { eq } from 'drizzle-orm';
 import { db } from '../db/index.js';
-import { confusionContexts, questions, users } from '../db/schema.js';
+import { confusionContexts, users } from '../db/schema.js';
 import { requireAuth } from '../middleware/auth.js';
 import { sessionManager } from '../ws/session-manager.js';
 
@@ -12,7 +12,6 @@ const router = new Hono();
 router.use('*', requireAuth());
 
 // Submit confusion context (student only)
-// Also auto-creates a Q&A question for the lecturer
 router.post(
   '/session/:sessionId',
   requireAuth('student'),
@@ -53,43 +52,12 @@ router.post(
       })
       .returning();
 
-    // Auto-create a Q&A question so the lecturer sees it live
-    const reason = explanation?.trim();
-    const questionContent = reason
-      ? `Could you please explain this in more detail? — ${reason}`
-      : 'Could you please explain this in more detail?';
-
-    const [user] = await db.select().from(users).where(eq(users.id, sub));
-    const [question] = await db
-      .insert(questions)
-      .values({
-        sessionId,
-        studentId: sub,
-        content: questionContent,
-        slideIndex,
-      })
-      .returning();
-
-    // Push to lecturer's live Q&A via WebSocket
-    sessionManager.handleNewQuestion(sessionId, {
-      id: question.id,
-      sessionId: question.sessionId,
-      studentId: question.studentId,
-      studentName: user?.name ?? 'Student',
-      content: question.content,
-      slideIndex: question.slideIndex,
-      askedAt: question.askedAt.toISOString(),
-      answered: question.answered,
-      answeredAt: null,
-      upvoteCount: 0,
-    });
-
     // Push each confusion highlight to the lecturer in real-time
     for (const hl of highlights) {
       sessionManager.handleConfusionArea(sessionId, slideIndex, hl, emoji);
     }
 
-    return c.json({ id: row.id, questionId: question.id }, 201);
+    return c.json({ id: row.id }, 201);
   },
 );
 

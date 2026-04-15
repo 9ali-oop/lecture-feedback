@@ -1,9 +1,9 @@
 import { Hono } from 'hono';
 import { zValidator } from '@hono/zod-validator';
 import { z } from 'zod';
-import { eq, and, count } from 'drizzle-orm';
+import { eq, and, count, countDistinct } from 'drizzle-orm';
 import { db } from '../db/index.js';
-import { sessions, modules, moduleEnrollments, feedbackEvents, sessionParticipants, slideTimings, questions, users, slideWhiteboards, slideAnnotations, slideNotes, confusionContexts, questionUpvotes } from '../db/schema.js';
+import { sessions, modules, moduleEnrollments, feedbackEvents, sessionParticipants, slideTimings, questions, users, slideWhiteboards, slideAnnotations, slideNotes, confusionContexts, questionUpvotes, polls, pollResponses, paceFeedback, reflections, studentProfiles } from '../db/schema.js';
 import { requireAuth } from '../middleware/auth.js';
 import { savePdf, readPdf, saveWhiteboard, readWhiteboard, saveAnnotation, readAnnotation } from '../lib/storage.js';
 import { sessionManager } from '../ws/session-manager.js';
@@ -63,6 +63,16 @@ router.get('/module/:moduleId', async (c) => {
 
   const mod = (await db.select().from(modules).where(eq(modules.id, moduleId)))[0];
 
+  // For students, check which sessions they actually participated in
+  let participatedSet = new Set<string>();
+  if (role === 'student') {
+    const participated = await db
+      .select({ sessionId: sessionParticipants.sessionId })
+      .from(sessionParticipants)
+      .where(eq(sessionParticipants.studentId, sub));
+    participatedSet = new Set(participated.map((p) => p.sessionId));
+  }
+
   return c.json(
     rows.map((s) => ({
       id: s.id,
@@ -78,6 +88,7 @@ router.get('/module/:moduleId', async (c) => {
       startedAt: s.startedAt?.toISOString() ?? null,
       endedAt: s.endedAt?.toISOString() ?? null,
       createdAt: s.createdAt.toISOString(),
+      participated: role === 'student' ? participatedSet.has(s.id) : undefined,
     })),
   );
 });
@@ -135,9 +146,13 @@ router.post(
 
 // Upload PDF for a session
 router.post('/:id/pdf', requireAuth('lecturer', 'admin'), async (c) => {
+  const { sub, role } = c.get('jwtPayload');
   const { id } = c.req.param();
   const session = (await db.select().from(sessions).where(eq(sessions.id, id)))[0];
   if (!session) return c.json({ error: 'Session not found' }, 404);
+
+  const access = await requireSessionAccess(session.moduleId, role, sub);
+  if (!access.ok) return c.json({ error: access.message }, access.status);
 
   const body = await c.req.parseBody();
   const file = body['file'];
@@ -150,7 +165,14 @@ router.post('/:id/pdf', requireAuth('lecturer', 'admin'), async (c) => {
   const buffer = Buffer.from(arrayBuffer);
   const filePath = await savePdf(id, buffer);
 
-  await db.update(sessions).set({ pdfPath: filePath }).where(eq(sessions.id, id));
+  // Reset slide state on replace — the new PDF likely has a different page count,
+  // so leaving currentSlideIndex/totalSlides stale is how "slide 8 / 5" happens.
+  // The client will re-PATCH /slides with the true count once pdfjs loads it.
+  await db
+    .update(sessions)
+    .set({ pdfPath: filePath, currentSlideIndex: 0, totalSlides: 0 })
+    .where(eq(sessions.id, id));
+  sessionManager.setTotalSlides(id, 0);
 
   return c.json({ ok: true });
 });
@@ -192,6 +214,7 @@ router.post('/:id/start', requireAuth('lecturer', 'admin'), async (c) => {
   await db.update(sessions).set({ status: 'live', startedAt: new Date() }).where(eq(sessions.id, id));
 
   sessionManager.scheduleAutoEnd(id, 90);
+  sessionManager.notifySessionLive(id, session.moduleId, session.title);
 
   return c.json({ ok: true });
 });
@@ -207,6 +230,12 @@ router.post('/:id/end', requireAuth('lecturer', 'admin'), async (c) => {
   if (!access.ok) return c.json({ error: access.message }, access.status);
 
   await sessionManager.endSession(id);
+
+  // Fallback: ensure DB status is updated even if session manager had no room
+  if (session.status === 'live') {
+    await db.update(sessions).set({ status: 'ended', endedAt: new Date() }).where(eq(sessions.id, id));
+  }
+
   return c.json({ ok: true });
 });
 
@@ -216,9 +245,23 @@ router.patch(
   requireAuth('lecturer', 'admin'),
   zValidator('json', z.object({ totalSlides: z.number().int().min(1) })),
   async (c) => {
+    const { sub, role } = c.get('jwtPayload');
     const { id } = c.req.param();
     const { totalSlides } = c.req.valid('json');
-    await db.update(sessions).set({ totalSlides }).where(eq(sessions.id, id));
+
+    const [session] = await db.select().from(sessions).where(eq(sessions.id, id));
+    if (!session) return c.json({ error: 'Session not found' }, 404);
+
+    const access = await requireSessionAccess(session.moduleId, role, sub);
+    if (!access.ok) return c.json({ error: access.message }, access.status);
+
+    // Clamp currentSlideIndex in case the new PDF is shorter than where the
+    // lecturer had navigated to on the old one.
+    const clampedCurrent = Math.min(session.currentSlideIndex, Math.max(0, totalSlides - 1));
+    await db
+      .update(sessions)
+      .set({ totalSlides, currentSlideIndex: clampedCurrent })
+      .where(eq(sessions.id, id));
     sessionManager.setTotalSlides(id, totalSlides);
     return c.json({ ok: true });
   },
@@ -427,7 +470,7 @@ router.get('/:id/report', async (c) => {
     .where(eq(moduleEnrollments.moduleId, session.moduleId));
 
   const [{ count: peakParticipants }] = await db
-    .select({ count: count() })
+    .select({ count: countDistinct(sessionParticipants.studentId) })
     .from(sessionParticipants)
     .where(eq(sessionParticipants.sessionId, id));
 
@@ -528,9 +571,10 @@ router.get('/:id/report', async (c) => {
     upvoteCountMap.set(q.id, Number(c));
   }
 
-  // Feedback distribution per slide
+  // Feedback distribution per slide (include all slides with data, not just up to totalSlides)
   const slideDistMap = new Map<number, { got_it: number; neutral: number; confused: number; lost: number }>();
-  for (let i = 0; i < session.totalSlides; i++) slideDistMap.set(i, { got_it: 0, neutral: 0, confused: 0, lost: 0 });
+  const maxSlide = Math.max(session.totalSlides, ...events.map(e => e.slideIndex + 1), ...questionRows.map(q => (q.slideIndex ?? 0) + 1), ...confusionRows.map(c => c.slideIndex + 1));
+  for (let i = 0; i < maxSlide; i++) slideDistMap.set(i, { got_it: 0, neutral: 0, confused: 0, lost: 0 });
   for (const ev of events) {
     const d = slideDistMap.get(ev.slideIndex) ?? { got_it: 0, neutral: 0, confused: 0, lost: 0 };
     d[ev.emoji]++;
@@ -552,6 +596,7 @@ router.get('/:id/report', async (c) => {
     const timeSeconds = timingMap.get(slideIndex) ?? null;
 
     let recommendation = '';
+    const neutralPct = total > 0 ? (dist.neutral / total) * 100 : 0;
     if (total === 0) {
       recommendation = 'No feedback recorded for this slide.';
     } else if (gotItPct >= 97.5) {
@@ -560,8 +605,12 @@ router.get('/:id/report', async (c) => {
       recommendation = 'High confusion — add more examples or additional slides to cover this topic.';
     } else if (confusedPct >= 10) {
       recommendation = 'Some confusion detected — consider revisiting this content with examples.';
-    } else {
+    } else if (gotItPct >= 60) {
       recommendation = 'Good understanding overall.';
+    } else if (neutralPct >= 60) {
+      recommendation = 'Mostly neutral responses — students may not have fully engaged with this content yet.';
+    } else {
+      recommendation = 'Mixed responses — consider checking in with students on this topic.';
     }
 
     const slideQuestions = (questionsBySlide.get(slideIndex) ?? []).map((q) => ({
@@ -612,6 +661,104 @@ router.get('/:id/report', async (c) => {
 
   overallDist.total = overallDist.got_it + overallDist.neutral + overallDist.confused + overallDist.lost;
 
+  // ── Engagement analytics ────────────────────────────────────────────
+  const { computeSlideEngagement, computeSessionEngagement, computeSignalComparisons, segmentByProficiency, computeEmojiScore, computeConfusionScore, computeNoteScore, computeEngagementScore: computeEng } = await import('../lib/engagement.js');
+
+  // Fetch pace feedback for the session
+  const paceRows = await db.select({ studentId: paceFeedback.studentId, value: paceFeedback.value })
+    .from(paceFeedback).where(eq(paceFeedback.sessionId, id));
+  const sessionPaceDist = { slow: 0, ok: 0, fast: 0, total: paceRows.length };
+  for (const p of paceRows) {
+    sessionPaceDist[p.value as 'slow' | 'ok' | 'fast']++;
+  }
+
+  // Fetch note counts per slide
+  const noteRows = await db.select({ slideIndex: slideNotes.slideIndex, studentId: slideNotes.studentId })
+    .from(slideNotes).where(eq(slideNotes.sessionId, id));
+  const noteCountBySlide = new Map<number, Set<string>>();
+  for (const n of noteRows) {
+    if (!noteCountBySlide.has(n.slideIndex)) noteCountBySlide.set(n.slideIndex, new Set());
+    noteCountBySlide.get(n.slideIndex)!.add(n.studentId);
+  }
+
+  // Fetch student profiles for proficiency segmentation
+  const profileRows = await db.select({ userId: studentProfiles.userId, englishProficiency: studentProfiles.englishProficiency })
+    .from(studentProfiles);
+  const proficiencyMap = new Map(profileRows.map(p => [p.userId, p.englishProficiency as import('@lecture-feedback/shared').EnglishProficiency]));
+
+  const peak = Number(peakParticipants) || 1;
+
+  // Compute per-slide engagement (only for slides with actual data)
+  const slideEngagements: import('@lecture-feedback/shared').EngagementScore[] = [];
+  for (const slide of slides) {
+    const hasData = slide.distribution.total > 0 || slide.questions.length > 0 || slide.confusionContexts.length > 0;
+    if (hasData && peak > 0) {
+      const eng = computeSlideEngagement({
+        distribution: slide.distribution,
+        paceDistribution: sessionPaceDist,
+        questionCount: slide.questions.length,
+        confusionReports: slide.confusionContexts.length,
+        studentsWithNotes: noteCountBySlide.get(slide.slideIndex)?.size ?? 0,
+        participantCount: peak,
+      });
+      (slide as any).engagement = eng;
+      slideEngagements.push(eng);
+    }
+  }
+
+  const overallEngagement = computeSessionEngagement(slideEngagements);
+
+  // Signal comparison (research question)
+  const signalComparison = computeSignalComparisons(
+    slideEngagements.map((eng, i) => ({ signals: eng.signals, composite: eng.overall })),
+  );
+
+  // Proficiency segmentation (per-student)
+  // Build per-student signals from their individual feedback events
+  const studentFeedback = new Map<string, { got_it: number; neutral: number; confused: number; lost: number; total: number }>();
+  for (const ev of events) {
+    if (!studentFeedback.has(ev.studentId)) studentFeedback.set(ev.studentId, { got_it: 0, neutral: 0, confused: 0, lost: 0, total: 0 });
+    const sf = studentFeedback.get(ev.studentId)!;
+    sf[ev.emoji]++;
+    sf.total++;
+  }
+  const studentConfusionCounts = new Map<string, number>();
+  for (const cc of confusionRows) {
+    studentConfusionCounts.set(cc.studentId, (studentConfusionCounts.get(cc.studentId) ?? 0) + 1);
+  }
+  const studentNoteCounts = new Map<string, number>();
+  for (const n of noteRows) {
+    studentNoteCounts.set(n.studentId, (studentNoteCounts.get(n.studentId) ?? 0) + 1);
+  }
+  const studentPaceMap = new Map<string, string>();
+  for (const p of paceRows) {
+    studentPaceMap.set(p.studentId, p.value);
+  }
+
+  const allStudentIds = new Set([...studentFeedback.keys(), ...studentConfusionCounts.keys(), ...studentNoteCounts.keys(), ...studentPaceMap.keys()]);
+  const studentEngData: Array<{ studentId: string; proficiency: import('@lecture-feedback/shared').EnglishProficiency; signals: import('@lecture-feedback/shared').EngagementSignals; score: number }> = [];
+  for (const sid of allStudentIds) {
+    const prof = proficiencyMap.get(sid) ?? 'native';
+    const fb = studentFeedback.get(sid) ?? { got_it: 0, neutral: 0, confused: 0, lost: 0, total: 0 };
+    const signals: import('@lecture-feedback/shared').EngagementSignals = {
+      emoji: computeEmojiScore(fb),
+      pace: studentPaceMap.has(sid) ? (studentPaceMap.get(sid) === 'ok' ? 100 : 30) : null,
+      questions: null, // per-student question score not meaningful at aggregate
+      confusion: computeConfusionScore(studentConfusionCounts.get(sid) ?? 0, session.totalSlides),
+      notes: computeNoteScore(studentNoteCounts.get(sid) ?? 0, session.totalSlides),
+    };
+    studentEngData.push({ studentId: sid, proficiency: prof, signals, score: computeEng(signals) });
+  }
+  const proficiencyBreakdown = segmentByProficiency(studentEngData);
+
+  const engagement: import('@lecture-feedback/shared').EngagementAnalytics | undefined =
+    slideEngagements.length > 0 ? {
+      overallScore: overallEngagement,
+      perSlide: slides.filter(s => (s as any).engagement).map(s => ({ slideIndex: s.slideIndex, engagement: (s as any).engagement })),
+      signalComparison,
+      proficiencyBreakdown,
+    } : undefined;
+
   return c.json({
     session: {
       id: session.id,
@@ -632,14 +779,19 @@ router.get('/:id/report', async (c) => {
     peakParticipants: Number(peakParticipants),
     slides,
     overallDistribution: overallDist,
+    engagement,
   });
 });
 
 // Engagement timeline — 30-second buckets of activity metrics
 router.get('/:id/timeline', requireAuth('lecturer', 'admin'), async (c) => {
+  const { sub, role } = c.get('jwtPayload');
   const { id } = c.req.param();
   const session = (await db.select().from(sessions).where(eq(sessions.id, id)))[0];
   if (!session || !session.startedAt) return c.json([]);
+
+  const access = await requireSessionAccess(session.moduleId, role, sub);
+  if (!access.ok) return c.json({ error: access.message }, access.status);
 
   const startMs = session.startedAt.getTime();
   const endMs = session.endedAt?.getTime() ?? Date.now();
@@ -649,6 +801,15 @@ router.get('/:id/timeline', requireAuth('lecturer', 'admin'), async (c) => {
   const events = await db.select().from(feedbackEvents).where(eq(feedbackEvents.sessionId, id));
   const qRows = await db.select().from(questions).where(eq(questions.sessionId, id));
   const timings = await db.select().from(slideTimings).where(eq(slideTimings.sessionId, id));
+  const paceRows = await db.select().from(paceFeedback).where(eq(paceFeedback.sessionId, id));
+  const pDist = { slow: 0, ok: 0, fast: 0, total: paceRows.length };
+  for (const p of paceRows) pDist[p.value as 'slow' | 'ok' | 'fast']++;
+
+  const { computeEmojiScore: emojiScore, computeEngagementScore: engScore } = await import('../lib/engagement.js');
+
+  // Peak participants for engagement calc
+  const [{ count: peakCount }] = await db.select({ count: countDistinct(sessionParticipants.studentId) }).from(sessionParticipants).where(eq(sessionParticipants.sessionId, id));
+  const peak = Number(peakCount) || 1;
 
   // Build buckets
   const buckets = [];
@@ -677,19 +838,89 @@ router.get('/:id/timeline', requireAuth('lecturer', 'admin'), async (c) => {
       return qTime >= t && qTime < bucketEnd;
     });
 
+    // Engagement score for this bucket
+    const dist = { got_it: 0, neutral: 0, confused: 0, lost: 0, total: 0 };
+    for (const e of bucketEvents) { dist[e.emoji]++; dist.total++; }
+    const confusedPctVal = total > 0 ? Math.round((confused / total) * 100) : 0;
+    const engagementScore = total > 0 ? engScore({
+      emoji: emojiScore(dist),
+      pace: null, // pace is session-level, don't inflate per-bucket
+      questions: bucketQuestions.length > 0 ? Math.round(Math.min(100, (bucketQuestions.length / peak) * 80)) : null,
+      confusion: confused > 0 ? Math.max(0, 100 - confusedPctVal * 2) : null,
+      notes: null,
+    }) : null;
+
     buckets.push({
       timestamp: new Date(t).toISOString(),
       slideIndex,
       confusedPct: total > 0 ? Math.round((confused / total) * 100) : 0,
       responseCount: total,
       questionCount: bucketQuestions.length,
-      paceSlow: 0,
-      paceOk: 0,
-      paceFast: 0,
+      paceSlow: pDist.slow,
+      paceOk: pDist.ok,
+      paceFast: pDist.fast,
+      engagementScore,
     });
   }
 
   return c.json(buckets);
+});
+
+// Delete a session and all related data
+router.delete('/:id', requireAuth('lecturer', 'admin'), async (c) => {
+  const { sub, role } = c.get('jwtPayload');
+  const { id } = c.req.param();
+
+  const session = (await db.select().from(sessions).where(eq(sessions.id, id)))[0];
+  if (!session) return c.json({ error: 'Session not found' }, 404);
+
+  if (session.status === 'live') {
+    // Allow deleting ghost live sessions (no active room in memory)
+    const hasActiveRoom = sessionManager.hasRoom(id);
+    if (hasActiveRoom) return c.json({ error: 'Cannot delete a live session' }, 400);
+    // Force-end the ghost session first
+    await db.update(sessions).set({ status: 'ended', endedAt: new Date() }).where(eq(sessions.id, id));
+  }
+
+  const access = await requireSessionAccess(session.moduleId, role, sub);
+  if (!access.ok) return c.json({ error: access.message }, access.status);
+
+  // Delete all related rows (no cascade set up on session FK)
+  const sid = eq(feedbackEvents.sessionId, id);
+  await db.delete(feedbackEvents).where(sid);
+  await db.delete(sessionParticipants).where(eq(sessionParticipants.sessionId, id));
+  await db.delete(slideTimings).where(eq(slideTimings.sessionId, id));
+  await db.delete(slideWhiteboards).where(eq(slideWhiteboards.sessionId, id));
+  await db.delete(slideAnnotations).where(eq(slideAnnotations.sessionId, id));
+  await db.delete(slideNotes).where(eq(slideNotes.sessionId, id));
+  await db.delete(confusionContexts).where(eq(confusionContexts.sessionId, id));
+
+  // Questions + upvotes (upvotes FK to questions)
+  const sessionQuestions = await db.select({ id: questions.id }).from(questions).where(eq(questions.sessionId, id));
+  if (sessionQuestions.length > 0) {
+    for (const q of sessionQuestions) {
+      await db.delete(questionUpvotes).where(eq(questionUpvotes.questionId, q.id));
+    }
+    await db.delete(questions).where(eq(questions.sessionId, id));
+  }
+
+  // Polls + responses
+  const sessionPolls = await db.select({ id: polls.id }).from(polls).where(eq(polls.sessionId, id));
+  if (sessionPolls.length > 0) {
+    for (const p of sessionPolls) {
+      await db.delete(pollResponses).where(eq(pollResponses.pollId, p.id));
+    }
+    await db.delete(polls).where(eq(polls.sessionId, id));
+  }
+
+  // Pace + reflections
+  await db.delete(paceFeedback).where(eq(paceFeedback.sessionId, id));
+  await db.delete(reflections).where(eq(reflections.sessionId, id));
+
+  // Finally delete the session itself
+  await db.delete(sessions).where(eq(sessions.id, id));
+
+  return c.json({ ok: true });
 });
 
 export default router;

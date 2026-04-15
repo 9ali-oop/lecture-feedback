@@ -90,7 +90,7 @@ function extractTopPhrases(texts: string[], topN = 8): string[] {
   const freq = new Map<string, number>();
 
   for (const text of texts) {
-    const words = text.toLowerCase().replace(/[^a-z0-9\s'-]/g, '').split(/\s+/).filter((w) => w.length > 2 && !STOP_WORDS.has(w));
+    const words = text.toLowerCase().replace(/[()/<>]/g, ' ').replace(/[^a-z0-9\s'-]/g, '').split(/\s+/).filter((w) => w.length > 2 && !STOP_WORDS.has(w));
 
     // Count individual words
     for (const word of words) {

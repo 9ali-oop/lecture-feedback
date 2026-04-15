@@ -11,6 +11,7 @@ export interface RevokeInfo {
 export function useAnnotationAccess(socket: SessionSocket | null) {
   const [status, setStatus] = useState<AnnotationAccessStatus>('idle');
   const [lastRevoke, setLastRevoke] = useState<RevokeInfo | null>(null);
+  const [lastError, setLastError] = useState<string | null>(null);
 
   useEffect(() => {
     if (!socket) return;
@@ -20,6 +21,7 @@ export function useAnnotationAccess(socket: SessionSocket | null) {
         case 'ANNOTATION_ACCESS_GRANTED':
           setStatus('granted');
           setLastRevoke(null);
+          setLastError(null);
           break;
         case 'ANNOTATION_ACCESS_REVOKED':
           setStatus('idle');
@@ -27,6 +29,12 @@ export function useAnnotationAccess(socket: SessionSocket | null) {
           break;
         case 'ANNOTATION_ACCESS_DISMISSED':
           setStatus('idle');
+          break;
+        case 'ERROR':
+          // If the server rejected the request (e.g. reason too long), don't
+          // leave the student stuck in 'pending' with no way out.
+          setStatus((prev) => (prev === 'pending' ? 'idle' : prev));
+          setLastError(msg.message);
           break;
       }
     });
@@ -36,6 +44,7 @@ export function useAnnotationAccess(socket: SessionSocket | null) {
 
   const requestAccess = useCallback((reason: string) => {
     if (!socket) return;
+    setLastError(null);
     socket.send({ type: 'ANNOTATION_ACCESS_REQUEST', reason });
     setStatus('pending');
   }, [socket]);
@@ -46,5 +55,5 @@ export function useAnnotationAccess(socket: SessionSocket | null) {
     setStatus('idle');
   }, [socket]);
 
-  return { status, lastRevoke, requestAccess, cancelRequest };
+  return { status, lastRevoke, lastError, requestAccess, cancelRequest };
 }

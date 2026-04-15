@@ -20,6 +20,7 @@ interface PdfViewerProps {
   eraserWidth?: number;
   token?: string;
   whiteboardMode?: boolean;
+  scaleMode?: 'contain' | 'width'; // 'contain' fits both w+h (lecturer), 'width' fits width only (student)
   onCanvasResize?: (width: number, height: number) => void;
   onDrawStart?: (x: number, y: number, tool: DrawTool) => void;
   onDrawMove?: (x: number, y: number, tool: DrawTool) => void;
@@ -39,6 +40,7 @@ export default function PdfViewer({
   eraserWidth = 28,
   token,
   whiteboardMode = false,
+  scaleMode = 'contain',
   onCanvasResize,
   onDrawStart,
   onDrawMove,
@@ -109,10 +111,16 @@ export default function PdfViewer({
     if (!canvas || !container) return;
 
     const containerWidth = container.clientWidth || 900;
+    const containerHeight = container.clientHeight || 600;
 
     if (whiteboardMode) {
-      const w = containerWidth;
-      const h = Math.round(containerWidth * 9 / 16);
+      // Fit 16:9 whiteboard within available space
+      const wByWidth = containerWidth;
+      const hByWidth = Math.round(containerWidth * 9 / 16);
+      const wByHeight = Math.round(containerHeight * 16 / 9);
+      const hByHeight = containerHeight;
+      const w = hByWidth <= containerHeight ? wByWidth : wByHeight;
+      const h = hByWidth <= containerHeight ? hByWidth : hByHeight;
       canvas.width = w;
       canvas.height = h;
       const ctx = canvas.getContext('2d')!;
@@ -129,18 +137,35 @@ export default function PdfViewer({
     const pageNum = Math.min(Math.max(pageIndex + 1, 1), pdf.numPages);
     const page = await pdf.getPage(pageNum);
     const viewport = page.getViewport({ scale: 1 });
-    const scale = containerWidth / viewport.width;
-    const sv = page.getViewport({ scale });
+    // Scale to fit the container (CSS pixels)
+    const scaleByWidth = containerWidth / viewport.width;
+    const baseScale = scaleMode === 'contain'
+      ? Math.min(scaleByWidth, containerHeight / viewport.height)
+      : scaleByWidth;
 
-    canvas.width = sv.width;
-    canvas.height = sv.height;
-    saveAndResizeOverlay(sv.width, sv.height);
-    onCanvasResizeRef.current?.(sv.width, sv.height);
+    // Render at device-pixel-ratio × base scale so text is crisp on high-DPI
+    // phones. Cap at 2.5x to avoid pathological canvases on "4x" devices that
+    // report large DPRs, which murder memory for no perceptible gain.
+    const dpr = Math.min(window.devicePixelRatio || 1, 2.5);
+    const renderScale = baseScale * dpr;
+    const sv = page.getViewport({ scale: renderScale });
+
+    const pixelW = Math.round(sv.width);
+    const pixelH = Math.round(sv.height);
+    const displayW = Math.round(sv.width / dpr);
+    const displayH = Math.round(sv.height / dpr);
+
+    canvas.width = pixelW;           // canvas intrinsic resolution (high)
+    canvas.height = pixelH;
+    canvas.style.width = `${displayW}px`;  // CSS size (display)
+    canvas.style.height = `${displayH}px`;
+    saveAndResizeOverlay(displayW, displayH);
+    onCanvasResizeRef.current?.(displayW, displayH);
 
     renderTaskRef.current?.cancel();
     renderTaskRef.current = page.render({ canvasContext: canvas.getContext('2d')!, viewport: sv });
     try { await renderTaskRef.current.promise; } catch { /* cancelled */ }
-  }, [overlayRef, whiteboardMode, saveAndResizeOverlay]);
+  }, [overlayRef, whiteboardMode, scaleMode, saveAndResizeOverlay]);
 
   useEffect(() => {
     if (whiteboardMode) {
@@ -151,33 +176,47 @@ export default function PdfViewer({
   }, [currentPage, loading, renderPage, whiteboardMode]);
 
   // ── Resize observer ─────────────────────────────────────────────
-  const lastObservedWidth = useRef(0);
+  const lastObservedSize = useRef({ w: 0, h: 0 });
+  const resizeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   useEffect(() => {
     const container = containerRef.current;
     if (!container) return;
     const ro = new ResizeObserver((entries) => {
-      const width = Math.round(entries[0]?.contentRect.width ?? 0);
-      if (width === 0 || width === lastObservedWidth.current) return;
-      lastObservedWidth.current = width;
-      if (whiteboardMode || (!loading && pdfRef.current)) {
-        renderPage(currentPage);
-      }
+      const rect = entries[0]?.contentRect;
+      if (!rect) return;
+      const w = Math.round(rect.width);
+      const h = Math.round(rect.height);
+      if (w === 0 || (w === lastObservedSize.current.w && h === lastObservedSize.current.h)) return;
+      lastObservedSize.current = { w, h };
+      // Debounce to prevent resize loops
+      if (resizeTimer.current) clearTimeout(resizeTimer.current);
+      resizeTimer.current = setTimeout(() => {
+        if (whiteboardMode || (!loading && pdfRef.current)) {
+          renderPage(currentPage);
+        }
+      }, 50);
     });
     ro.observe(container);
-    return () => ro.disconnect();
+    return () => { ro.disconnect(); if (resizeTimer.current) clearTimeout(resizeTimer.current); };
   }, [currentPage, loading, renderPage, whiteboardMode]);
 
   // ── Drawing ──────────────────────────────────────────────────────
+  // Uses Pointer Events so the same handler covers mouse, touch, and pen.
+  // Mobile students can now swipe to move the laser / draw with a finger —
+  // previously (mouse-only) the laser and drawing were invisible on phones.
   const drawing = useRef(false);
+  const activePointerId = useRef<number | null>(null);
   const lastPos = useRef<{ x: number; y: number } | null>(null);
 
-  function getPos(e: React.MouseEvent<HTMLCanvasElement>) {
+  function getPos(e: React.PointerEvent<HTMLCanvasElement>) {
     const r = (e.target as HTMLCanvasElement).getBoundingClientRect();
     return { x: e.clientX - r.left, y: e.clientY - r.top };
   }
 
-  function onMouseMove(e: React.MouseEvent<HTMLCanvasElement>) {
+  function onPointerMove(e: React.PointerEvent<HTMLCanvasElement>) {
     if (!overlayRef?.current) return;
+    // If we're in an active stroke, only track the pointer that started it
+    if (activePointerId.current !== null && e.pointerId !== activePointerId.current) return;
     const pos = getPos(e);
 
     if (tool === 'laser') {
@@ -221,25 +260,62 @@ export default function PdfViewer({
     lastPos.current = pos;
   }
 
-  function onMouseDown(e: React.MouseEvent<HTMLCanvasElement>) {
-    if (tool === 'pointer' || tool === 'laser' || tool === 'text') return;
-    drawing.current = true;
+  function onPointerDown(e: React.PointerEvent<HTMLCanvasElement>) {
+    if (tool === 'pointer' || tool === 'text') return;
+
+    // Capture this pointer so we keep getting move/up events even if the
+    // finger leaves the canvas bounds. Crucial on mobile.
+    try { (e.target as HTMLCanvasElement).setPointerCapture(e.pointerId); } catch { /* older browser */ }
+    activePointerId.current = e.pointerId;
+
     const pos = getPos(e);
+
+    if (tool === 'laser') {
+      // Show the laser dot immediately on tap / first touch
+      const dot = laserDotRef.current;
+      if (dot) {
+        dot.style.left = `${pos.x - 22}px`;
+        dot.style.top = `${pos.y - 22}px`;
+        dot.style.display = 'block';
+      }
+      onDrawMove?.(pos.x, pos.y, 'laser');
+      return;
+    }
+
+    drawing.current = true;
     lastPos.current = pos;
     onDrawStart?.(pos.x, pos.y, tool);
   }
 
-  function onMouseUp() {
+  function onPointerUp(e: React.PointerEvent<HTMLCanvasElement>) {
+    if (activePointerId.current !== null && e.pointerId !== activePointerId.current) return;
+    try { (e.target as HTMLCanvasElement).releasePointerCapture(e.pointerId); } catch { /* ignore */ }
+    activePointerId.current = null;
+
+    if (tool === 'laser') {
+      // Hide laser dot when finger lifts on touch. On desktop the mouse still
+      // shows it during hover, so only hide the DOM dot — parent decides whether
+      // to send LASER_END (it does via onLeave for touch devices).
+      if (laserDotRef.current) laserDotRef.current.style.display = 'none';
+      onLeave?.('laser');
+      return;
+    }
+
     drawing.current = false;
     onDrawEnd?.(tool);
   }
 
-  function onMouseLeave() {
+  function onPointerLeave() {
     drawing.current = false;
     if (tool === 'laser' && laserDotRef.current) {
       laserDotRef.current.style.display = 'none';
     }
     onLeave?.(tool);
+  }
+
+  function onPointerCancel(e: React.PointerEvent<HTMLCanvasElement>) {
+    // e.g. OS gesture / scroll taking over. Treat like pointer up.
+    onPointerUp(e);
   }
 
   const cursor =
@@ -264,16 +340,20 @@ export default function PdfViewer({
           <div className="h-8 w-8 animate-spin rounded-full border-4 border-blue-500 border-t-transparent" />
         </div>
       )}
-      <canvas ref={canvasRef} className="block w-full" />
+      <canvas ref={canvasRef} className="block" />
       {overlayRef && (
         <canvas
           ref={overlayRef as React.RefObject<HTMLCanvasElement>}
-          className="absolute inset-0 w-full"
-          style={{ cursor }}
-          onMouseDown={onMouseDown}
-          onMouseMove={onMouseMove}
-          onMouseUp={onMouseUp}
-          onMouseLeave={onMouseLeave}
+          className="absolute top-0 left-0"
+          // `touchAction: none` disables the browser's scroll/zoom gesture
+          // handling on this canvas so finger drags reach our pointer
+          // handlers (otherwise phones treat a swipe as a page pan).
+          style={{ cursor, touchAction: 'none' }}
+          onPointerDown={onPointerDown}
+          onPointerMove={onPointerMove}
+          onPointerUp={onPointerUp}
+          onPointerLeave={onPointerLeave}
+          onPointerCancel={onPointerCancel}
         />
       )}
       {/* Laser dot rendered as DOM element to avoid clearing the annotation canvas */}

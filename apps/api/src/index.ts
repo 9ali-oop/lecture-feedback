@@ -15,10 +15,11 @@ import confusionRouter from './routes/confusion.js';
 import pollsRouter from './routes/polls.js';
 import reflectionsRouter from './routes/reflections.js';
 import analyticsRouter from './routes/analytics.js';
+import joinRouter from './routes/join.js';
 import { verifyToken } from './lib/jwt.js';
 import { sessionManager } from './ws/session-manager.js';
 import { db } from './db/index.js';
-import { users, sessions, questions, questionUpvotes, paceFeedback, pollResponses, polls } from './db/schema.js';
+import { users, questions, questionUpvotes, pollResponses, polls } from './db/schema.js';
 import { eq, and, count, sql } from 'drizzle-orm';
 import { ensureUploadsDir } from './lib/storage.js';
 import type { WsClientMessage } from '@lecture-feedback/shared';
@@ -53,6 +54,7 @@ app.route('/confusion', confusionRouter);
 app.route('/polls', pollsRouter);
 app.route('/reflections', reflectionsRouter);
 app.route('/analytics', analyticsRouter);
+app.route('/join', joinRouter);
 
 app.get('/health', (c) => c.json({ ok: true }));
 
@@ -88,6 +90,24 @@ app.get(
 
     const userId = payload.sub;
     const role = payload.role;
+    const isDashboard = sessionId === 'dashboard';
+
+    // Dashboard connection: lightweight WS for live session notifications
+    if (isDashboard) {
+      return {
+        onOpen(_, ws) {
+          sessionManager.joinDashboard(userId, ws);
+        },
+        onMessage(event, ws) {
+          let msg: WsClientMessage;
+          try { msg = JSON.parse(event.data.toString()) as WsClientMessage; } catch { return; }
+          if (msg.type === 'PING') ws.send(JSON.stringify({ type: 'PONG' }));
+        },
+        onClose(_evt, ws) {
+          sessionManager.disconnectDashboard(userId, ws);
+        },
+      };
+    }
 
     return {
       async onOpen(_, ws) {
@@ -114,10 +134,9 @@ app.get(
 
           case 'SLIDE_CHANGE':
             if (role === 'lecturer' || role === 'admin') {
-              db.update(sessions)
-                .set({ currentSlideIndex: msg.slideIndex })
-                .where(eq(sessions.id, sessionId))
-                .catch(console.error);
+              // DB persist now lives inside handleSlideChange so the clamped
+              // value is always what gets written — no race between the raw
+              // and clamped writes.
               sessionManager.handleSlideChange(sessionId, msg.slideIndex);
             }
             break;
@@ -233,6 +252,18 @@ app.get(
             }
             break;
 
+          case 'WHITEBOARD_TOGGLE':
+            if (role === 'lecturer' || role === 'admin') {
+              sessionManager.handleWhiteboardToggle(sessionId, msg.enabled);
+            }
+            break;
+
+          case 'TEXT_BOX_SYNC':
+            if (role === 'lecturer' || role === 'admin') {
+              sessionManager.handleTextBoxSync(sessionId, msg.slideIndex, msg.textBoxes);
+            }
+            break;
+
           // ── Annotation access messages ──────────────────────────────────
           case 'ANNOTATION_ACCESS_REQUEST':
             if (role === 'student') {
@@ -284,24 +315,25 @@ app.get(
           // ── Poll response (via WS for speed, also available via REST) ──────
           case 'POLL_RESPONSE':
             if (role === 'student') {
-              const existing = await db.select().from(pollResponses)
-                .where(and(eq(pollResponses.pollId, msg.pollId), eq(pollResponses.studentId, userId)));
-              if (existing.length === 0) {
-                await db.insert(pollResponses).values({
-                  pollId: msg.pollId, studentId: userId, optionIndex: msg.optionIndex,
-                });
+              // Only allow responses while the poll is active
+              const respondPoll = (await db.select().from(polls).where(eq(polls.id, msg.pollId)))[0];
+              if (respondPoll && respondPoll.status === 'active') {
+                // Upsert: insert or update if student changes their answer
+                await db.execute(sql`
+                  INSERT INTO poll_responses (id, poll_id, student_id, option_index, responded_at)
+                  VALUES (gen_random_uuid(), ${msg.pollId}, ${userId}, ${msg.optionIndex}, now())
+                  ON CONFLICT (poll_id, student_id)
+                  DO UPDATE SET option_index = ${msg.optionIndex}, responded_at = now()
+                `);
                 // Compute and broadcast results to lecturer
-                const poll = (await db.select().from(polls).where(eq(polls.id, msg.pollId)))[0];
-                if (poll) {
-                  const responses = await db.select().from(pollResponses).where(eq(pollResponses.pollId, poll.id));
-                  const options = poll.options as string[];
-                  const counts = new Array(options.length).fill(0);
-                  for (const r of responses) { if (r.optionIndex >= 0 && r.optionIndex < counts.length) counts[r.optionIndex]++; }
-                  sessionManager.broadcastPollResults(sessionId, {
-                    pollId: poll.id, question: poll.question, options, counts,
-                    totalResponses: responses.length, status: poll.status as 'active' | 'closed',
-                  });
-                }
+                const responses = await db.select().from(pollResponses).where(eq(pollResponses.pollId, respondPoll.id));
+                const options = respondPoll.options as string[];
+                const counts = new Array(options.length).fill(0);
+                for (const r of responses) { if (r.optionIndex >= 0 && r.optionIndex < counts.length) counts[r.optionIndex]++; }
+                sessionManager.broadcastPollResults(sessionId, {
+                  pollId: respondPoll.id, question: respondPoll.question, options, counts,
+                  totalResponses: responses.length, status: respondPoll.status as 'active' | 'closed',
+                });
               }
             }
             break;
@@ -330,11 +362,11 @@ app.get(
         }
       },
 
-      onClose() {
+      onClose(_evt, ws) {
         if (role === 'lecturer' || role === 'admin') {
-          sessionManager.disconnectLecturer(sessionId);
+          sessionManager.disconnectLecturer(sessionId, ws);
         } else {
-          sessionManager.disconnectStudent(sessionId, userId);
+          sessionManager.disconnectStudent(sessionId, userId, ws);
         }
       },
     };

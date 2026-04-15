@@ -16,6 +16,7 @@ export interface LaserState {
   x: number;
   y: number;
   paused: boolean;
+  slideIndex: number;
 }
 
 export interface CursorState {
@@ -33,16 +34,18 @@ export interface IncomingStroke {
   size?: number;
 }
 
+const EMPTY_ANNOTATIONS: StoredAnnotation[] = [];
+
 export function useAnnotationReceiver(socket: SessionSocket | null) {
   const annotationsRef = useRef<Map<number, StoredAnnotation[]>>(new Map());
-  const [laserState, setLaserState] = useState<LaserState>({ visible: false, x: 0, y: 0, paused: false });
+  const [laserState, setLaserState] = useState<LaserState>({ visible: false, x: 0, y: 0, paused: false, slideIndex: -1 });
   const [cursorState, setCursorState] = useState<CursorState>({ visible: false, x: 0, y: 0, tool: 'pointer' });
   const [incomingStroke, setIncomingStroke] = useState<IncomingStroke | null>(null);
   const [syncTrigger, setSyncTrigger] = useState(0);
   const [clearSlide, setClearSlide] = useState(0);
 
   const getAnnotations = useCallback((slideIndex: number): StoredAnnotation[] => {
-    return annotationsRef.current.get(slideIndex) ?? [];
+    return annotationsRef.current.get(slideIndex) ?? EMPTY_ANNOTATIONS;
   }, []);
 
   useEffect(() => {
@@ -88,15 +91,15 @@ export function useAnnotationReceiver(socket: SessionSocket | null) {
           break;
 
         case 'LASER_MOVE':
-          setLaserState({ visible: true, x: msg.x, y: msg.y, paused: false });
+          setLaserState({ visible: true, x: msg.x, y: msg.y, paused: false, slideIndex: msg.slideIndex });
           break;
 
         case 'LASER_PAUSE':
-          setLaserState({ visible: true, x: msg.x, y: msg.y, paused: true });
+          setLaserState({ visible: true, x: msg.x, y: msg.y, paused: true, slideIndex: msg.slideIndex });
           break;
 
         case 'LASER_END':
-          setLaserState({ visible: false, x: 0, y: 0, paused: false });
+          setLaserState({ visible: false, x: 0, y: 0, paused: false, slideIndex: -1 });
           break;
 
         case 'CURSOR_POSITION':

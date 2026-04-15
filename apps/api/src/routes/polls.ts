@@ -1,7 +1,7 @@
 import { Hono } from 'hono';
 import { zValidator } from '@hono/zod-validator';
 import { z } from 'zod';
-import { eq, and, count as dbCount } from 'drizzle-orm';
+import { eq, and, count as dbCount, sql } from 'drizzle-orm';
 import { db } from '../db/index.js';
 import { polls, pollResponses } from '../db/schema.js';
 import { requireAuth } from '../middleware/auth.js';
@@ -62,19 +62,23 @@ router.post(
     const { sub } = c.get('jwtPayload');
     const { optionIndex } = c.req.valid('json');
 
-    // Check if already responded
-    const existing = await db.select().from(pollResponses)
-      .where(and(eq(pollResponses.pollId, pollId), eq(pollResponses.studentId, sub)));
-    if (existing.length > 0) return c.json({ error: 'Already responded' }, 409);
+    // Only allow responses while the poll is active
+    const targetPoll = (await db.select().from(polls).where(eq(polls.id, pollId)))[0];
+    if (!targetPoll || targetPoll.status !== 'active') {
+      return c.json({ error: 'Poll is not active' }, 409);
+    }
 
-    await db.insert(pollResponses).values({ pollId, studentId: sub, optionIndex });
+    // Upsert: insert or update if student changes their answer
+    await db.execute(sql`
+      INSERT INTO poll_responses (id, poll_id, student_id, option_index, responded_at)
+      VALUES (gen_random_uuid(), ${pollId}, ${sub}, ${optionIndex}, now())
+      ON CONFLICT (poll_id, student_id)
+      DO UPDATE SET option_index = ${optionIndex}, responded_at = now()
+    `);
 
     // Get updated results and broadcast
-    const poll = (await db.select().from(polls).where(eq(polls.id, pollId)))[0];
-    if (poll) {
-      const results = await computeResults(poll);
-      sessionManager.broadcastPollResults(poll.sessionId, results);
-    }
+    const results = await computeResults(targetPoll);
+    sessionManager.broadcastPollResults(targetPoll.sessionId, results);
 
     return c.json({ ok: true });
   },

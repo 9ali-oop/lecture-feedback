@@ -5,6 +5,7 @@ import { eq, and } from 'drizzle-orm';
 import { db } from '../db/index.js';
 import { slideNotes } from '../db/schema.js';
 import { requireAuth } from '../middleware/auth.js';
+import { sessionManager } from '../ws/session-manager.js';
 
 const router = new Hono();
 
@@ -79,6 +80,9 @@ router.put(
         content,
       });
     }
+
+    // Track note activity for real-time engagement scoring
+    sessionManager.trackNoteActivity(sessionId, sub, idx);
 
     return c.json({ ok: true });
   },
