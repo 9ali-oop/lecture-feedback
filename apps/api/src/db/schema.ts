@@ -1,5 +1,6 @@
 import {
   boolean,
+  customType,
   index,
   integer,
   jsonb,
@@ -10,6 +11,14 @@ import {
   unique,
   uuid,
 } from 'drizzle-orm/pg-core';
+
+// Postgres bytea column, typed as Buffer on the Node side. Drizzle doesn't
+// ship a built-in bytea helper, so this is the shortest path.
+const bytea = customType<{ data: Buffer }>({
+  dataType() {
+    return 'bytea';
+  },
+});
 
 export const roleEnum = pgEnum('role', ['admin', 'lecturer', 'student']);
 
@@ -272,3 +281,14 @@ export const slideNotes = pgTable('slide_notes', {
 }, (t) => [
   index('slide_notes_session_student_idx').on(t.sessionId, t.studentId),
 ]);
+
+// Binary blob storage — PDFs, whiteboard PNGs, annotation PNGs. Lives in
+// Postgres rather than the local filesystem so uploads survive Render's
+// ephemeral disk (which wipes on every deploy / cold restart). Keys are
+// human-readable paths like `session-<id>.pdf` so deleteSessionFiles can
+// LIKE-match by prefix.
+export const blobs = pgTable('blobs', {
+  key: text('key').primaryKey(),
+  data: bytea('data').notNull(),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+});
