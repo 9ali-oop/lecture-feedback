@@ -4,6 +4,7 @@
   "type": "module",
   "scripts": {
     "dev": "sh -c 'set -a; . ./.env; set +a; exec tsx watch src/index.ts'",
+    "start": "tsx src/index.ts",
     "build": "tsc",
     "db:push": "sh -c 'set -a; . ./.env; set +a; exec drizzle-kit push'",
     "db:seed": "sh -c 'set -a; . ./.env; set +a; exec tsx src/db/seed.ts'",
@@ -24,6 +25,7 @@
     "pdf-lib": "^1.17.1",
     "pg": "^8.13.3",
     "qrcode": "^1.5.4",
+    "tsx": "^4.19.3",
     "zod": "^3.24.2"
   },
   "devDependencies": {
@@ -32,7 +34,6 @@
     "@types/qrcode": "^1.5.5",
     "@types/ws": "^8.18.1",
     "drizzle-kit": "^0.30.6",
-    "tsx": "^4.19.3",
     "typescript": "^5.4.5",
     "vitest": "^2.1.9",
     "ws": "^8.20.0"

@@ -4,6 +4,8 @@
   "scripts": {
     "dev": "pnpm --parallel --filter './apps/*' dev",
     "build": "pnpm -r build",
+    "build:web": "pnpm --filter @lecture-feedback/web build",
+    "start": "pnpm --filter @lecture-feedback/api start",
     "db:push": "pnpm --filter @lecture-feedback/api db:push",
     "db:seed": "pnpm --filter @lecture-feedback/api db:seed",
     "db:studio": "pnpm --filter @lecture-feedback/api db:studio"

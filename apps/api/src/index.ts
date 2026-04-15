@@ -1,10 +1,19 @@
 import { config } from 'dotenv';
-config({ override: true }); // override any existing DATABASE_URL / env vars in the shell
+// In dev, load .env and let it override shell vars (so the .env file is the
+// single source of truth). In prod, env vars come from the hosting platform
+// (Render, Fly, etc.) — don't touch them.
+if (process.env.NODE_ENV !== 'production') {
+  config({ override: true });
+}
 import { serve } from '@hono/node-server';
+import { serveStatic } from '@hono/node-server/serve-static';
 import { createNodeWebSocket } from '@hono/node-ws';
 import { Hono } from 'hono';
 import { cors } from 'hono/cors';
 import { logger } from 'hono/logger';
+import fs from 'node:fs/promises';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import authRouter from './routes/auth.js';
 import adminRouter from './routes/admin.js';
 import modulesRouter from './routes/modules.js';
@@ -28,10 +37,17 @@ const app = new Hono();
 
 const { injectWebSocket, upgradeWebSocket } = createNodeWebSocket({ app });
 
+// CORS: in dev the web runs on a different port (5173) and needs CORS. In
+// prod the API serves the built web from the same origin, so CORS isn't
+// needed — but leaving it permissive for same-origin is a no-op and avoids
+// surprises if someone later fronts the API with a different hostname.
+const isProd = process.env.NODE_ENV === 'production';
 app.use(
   '*',
   cors({
-    origin: ['http://localhost:5173', 'http://127.0.0.1:5173'],
+    origin: isProd
+      ? (origin) => origin // reflect any origin in prod (same-origin requests have no Origin header and are unaffected)
+      : ['http://localhost:5173', 'http://127.0.0.1:5173'],
     credentials: true,
   }),
 );
@@ -43,20 +59,27 @@ app.onError((err, c) => {
 });
 
 // ── REST routes ───────────────────────────────────────────────────────────────
-
-app.route('/auth', authRouter);
-app.route('/admin', adminRouter);
-app.route('/modules', modulesRouter);
-app.route('/sessions', sessionsRouter);
-app.route('/questions', questionsRouter);
-app.route('/notes', notesRouter);
-app.route('/confusion', confusionRouter);
-app.route('/polls', pollsRouter);
-app.route('/reflections', reflectionsRouter);
-app.route('/analytics', analyticsRouter);
-app.route('/join', joinRouter);
+// Mounted at both root (for dev where Vite strips the /api prefix) and under
+// /api (for prod where the same Node process serves both API and the built
+// web — the web calls /api/* same-origin, no proxy involved).
+function mountRoutes(base: Hono, prefix: string) {
+  base.route(`${prefix}/auth`, authRouter);
+  base.route(`${prefix}/admin`, adminRouter);
+  base.route(`${prefix}/modules`, modulesRouter);
+  base.route(`${prefix}/sessions`, sessionsRouter);
+  base.route(`${prefix}/questions`, questionsRouter);
+  base.route(`${prefix}/notes`, notesRouter);
+  base.route(`${prefix}/confusion`, confusionRouter);
+  base.route(`${prefix}/polls`, pollsRouter);
+  base.route(`${prefix}/reflections`, reflectionsRouter);
+  base.route(`${prefix}/analytics`, analyticsRouter);
+  base.route(`${prefix}/join`, joinRouter);
+}
+mountRoutes(app, '');      // dev: /auth, /sessions, ...
+mountRoutes(app, '/api');  // prod: /api/auth, /api/sessions, ...
 
 app.get('/health', (c) => c.json({ ok: true }));
+app.get('/api/health', (c) => c.json({ ok: true }));
 
 // ── WebSocket ─────────────────────────────────────────────────────────────────
 
@@ -373,14 +396,48 @@ app.get(
   }),
 );
 
+// ── Static web serving (prod only) ────────────────────────────────────────────
+// In prod we build the web app and serve it from the same Node process so the
+// QR flow, /api/*, and /ws all live on one origin — no tunnels, no CORS, no
+// "which IP is my laptop on today". Dev path keeps Vite on :5173 with its
+// proxy so HMR still works.
+if (isProd) {
+  // Resolve the web build dir relative to the running API file, so the path
+  // works whether we `node dist/index.js` or run via pnpm scripts.
+  // `here` resolves to apps/api/src/ — the built web lives at apps/web/dist,
+  // two directory levels up.
+  const here = path.dirname(fileURLToPath(import.meta.url));
+  const webDist = path.resolve(here, '../../web/dist');
+  const indexHtmlPath = path.join(webDist, 'index.html');
+
+  let cachedIndexHtml: string | null = null;
+  try {
+    cachedIndexHtml = await fs.readFile(indexHtmlPath, 'utf8');
+    console.log(`Serving web build from ${webDist}`);
+  } catch {
+    console.warn(`Web build not found at ${webDist} — did you run "pnpm build"?`);
+  }
+
+  // Static assets (JS/CSS/images/fonts). Requests that don't match a file
+  // fall through to the SPA fallback below.
+  app.use('/*', serveStatic({ root: path.relative(process.cwd(), webDist) || '.' }));
+
+  // SPA fallback: any non-API path that didn't match a static file returns
+  // index.html so client-side routing works on refresh / deep links.
+  app.get('*', (c) => {
+    if (!cachedIndexHtml) return c.text('Web build missing', 500);
+    return c.html(cachedIndexHtml);
+  });
+}
+
 // ── Boot ──────────────────────────────────────────────────────────────────────
 
 const port = parseInt(process.env.PORT ?? '3000', 10);
 
 await ensureUploadsDir();
 
-const server = serve({ fetch: app.fetch, port }, () => {
-  console.log(`API running at http://localhost:${port}`);
+const server = serve({ fetch: app.fetch, port, hostname: '0.0.0.0' }, () => {
+  console.log(`API running on :${port}${isProd ? ' (prod, serving web build)' : ' (dev)'}`);
 });
 
 injectWebSocket(server);

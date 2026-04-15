@@ -1,0 +1,30 @@
+# Render blueprint. Connect the repo on Render and this file provisions the
+# service automatically.
+#
+# One web service hosts both the API and the built SPA on the same origin,
+# which is the whole point of this deploy — no CORS, no tunnel URL to share,
+# no "which IP is my laptop on today". The API reads NODE_ENV=production and
+# serves the web build from apps/web/dist with SPA fallback.
+#
+# Secrets (DATABASE_URL, ADMIN_EMAIL) are set in the Render dashboard, not here.
+services:
+  - type: web
+    name: lectureflow
+    runtime: node
+    plan: free
+    region: frankfurt
+    buildCommand: corepack enable && pnpm install --frozen-lockfile && pnpm build:web
+    startCommand: pnpm start
+    healthCheckPath: /health
+    autoDeploy: true
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: DATABASE_URL
+        sync: false
+      - key: JWT_SECRET
+        generateValue: true
+      - key: ADMIN_EMAIL
+        sync: false
+      - key: UPLOADS_DIR
+        value: /tmp/uploads
