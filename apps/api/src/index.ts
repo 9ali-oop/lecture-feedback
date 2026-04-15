@@ -29,7 +29,7 @@ import { verifyToken } from './lib/jwt.js';
 import { sessionManager } from './ws/session-manager.js';
 import { db } from './db/index.js';
 import { users, questions, questionUpvotes, pollResponses, polls } from './db/schema.js';
-import { requireSessionAccessById } from './lib/access.js';
+import { requireLiveSessionAccessById } from './lib/access.js';
 import { eq, and, count, sql } from 'drizzle-orm';
 import { ensureUploadsDir } from './lib/storage.js';
 import type { WsClientMessage } from '@lecture-feedback/shared';
@@ -132,7 +132,10 @@ app.get(
     // both read the live slide/feedback/annotation stream AND send FEEDBACK /
     // QUESTION / POLL_RESPONSE into a session they have no business being in.
     if (!isDashboard) {
-      const access = await requireSessionAccessById(sessionId, role, userId);
+      // requireLiveSessionAccessById also rejects sessions in 'ended' state —
+      // reconnecting to an ended session leaks room state and lets students
+      // keep "participating" with no lecturer watching.
+      const access = await requireLiveSessionAccessById(sessionId, role, userId);
       if (!access.ok) {
         return {
           onOpen(_, ws) {

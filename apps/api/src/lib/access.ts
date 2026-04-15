@@ -16,7 +16,7 @@ import { modules, moduleEnrollments, sessions } from '../db/schema.js';
 
 export type AccessResult =
   | { ok: true }
-  | { ok: false; status: 403 | 404; message: string };
+  | { ok: false; status: 403 | 404 | 410; message: string };
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -65,6 +65,30 @@ export async function requireSessionAccessById(
   if (!isUuid(sessionId)) return { ok: false, status: 404, message: 'Session not found' };
   const [session] = await db.select().from(sessions).where(eq(sessions.id, sessionId));
   if (!session) return { ok: false, status: 404, message: 'Session not found' };
+  return requireModuleAccess(session.moduleId, role, sub);
+}
+
+/**
+ * Session-access check that ALSO rejects if the session has ended. Use on
+ * the WS upgrade so students can't keep participating (feedback, polls,
+ * questions) in a session that's already over — the room has no lecturer
+ * to see their activity, it just pollutes the DB and confuses other users
+ * who might think the session is still live.
+ *
+ * REST routes mostly want the plain `requireSessionAccessById` because
+ * read endpoints (report, questions list, ...) should still work post-end.
+ */
+export async function requireLiveSessionAccessById(
+  sessionId: string,
+  role: string,
+  sub: string,
+): Promise<AccessResult> {
+  if (!isUuid(sessionId)) return { ok: false, status: 404, message: 'Session not found' };
+  const [session] = await db.select().from(sessions).where(eq(sessions.id, sessionId));
+  if (!session) return { ok: false, status: 404, message: 'Session not found' };
+  if (session.status === 'ended') {
+    return { ok: false, status: 410, message: 'Session has ended' };
+  }
   return requireModuleAccess(session.moduleId, role, sub);
 }
 
