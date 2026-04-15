@@ -374,6 +374,18 @@ app.get(
               // session B (where the WS-upgrade access check doesn't apply).
               const respondPoll = (await db.select().from(polls).where(eq(polls.id, msg.pollId)))[0];
               if (respondPoll && respondPoll.status === 'active' && respondPoll.sessionId === sessionId) {
+                // Mirror the REST route's optionIndex bounds check. Without
+                // this, a student can POST `optionIndex: 9999` via WS and it
+                // persists as a phantom vote that retroactively becomes a
+                // real vote if the poll options are ever edited. NaN / non-int
+                // would also throw at the Postgres integer column.
+                const options = respondPoll.options as string[];
+                if (
+                  typeof msg.optionIndex !== 'number' ||
+                  !Number.isInteger(msg.optionIndex) ||
+                  msg.optionIndex < 0 ||
+                  msg.optionIndex >= options.length
+                ) break;
                 // Upsert: insert or update if student changes their answer
                 await db.execute(sql`
                   INSERT INTO poll_responses (id, poll_id, student_id, option_index, responded_at)
@@ -383,7 +395,6 @@ app.get(
                 `);
                 // Compute and broadcast results to lecturer
                 const responses = await db.select().from(pollResponses).where(eq(pollResponses.pollId, respondPoll.id));
-                const options = respondPoll.options as string[];
                 const counts = new Array(options.length).fill(0);
                 for (const r of responses) { if (r.optionIndex >= 0 && r.optionIndex < counts.length) counts[r.optionIndex]++; }
                 sessionManager.broadcastPollResults(sessionId, {

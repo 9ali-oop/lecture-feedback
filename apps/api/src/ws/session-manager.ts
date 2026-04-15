@@ -404,11 +404,18 @@ export class SessionManager {
       .values({ sessionId, slideIndex, startedAt: now })
       .catch(console.error);
 
-    // Flush current emoji durations to DB for the previous slide
-    this.flushFeedback(sessionId, room, prevSlide);
+    // Flush current emoji durations to DB for the previous slide. Skip any
+    // student whose feedback for the new slide already arrived (race) —
+    // their emoji window is still open.
+    this.flushFeedback(sessionId, room, prevSlide, { skipSlide: clamped });
 
-    // Reset all student emoji states for new slide
+    // Reset emoji state for students who were on the OLD slide — they need
+    // to choose again for the new one. If a student's feedback for the new
+    // slide has already arrived (their student.slideIndex === clamped), keep
+    // their selection; otherwise we'd wipe a fresh vote that arrived a few
+    // ms before the lecturer's SLIDE_CHANGE message.
     for (const student of room.students.values()) {
+      if (student.slideIndex === clamped) continue;
       student.currentEmoji = null;
       student.emojiSelectedAt = null;
       student.slideIndex = slideIndex;
@@ -431,11 +438,14 @@ export class SessionManager {
       annotations: room.annotations.get(slideIndex) ?? [],
     });
 
-    // Reset distribution for new slide
+    // Broadcast the CURRENT distribution after the reset loop above. Using a
+    // hardcoded all-zero would wipe out fresh feedback that arrived for the
+    // new slide just before the lecturer's SLIDE_CHANGE (see handleSlideChange
+    // reset guard: students already on `clamped` keep their emoji).
     if (room.lecturerWs) {
       send(room.lecturerWs, {
         type: 'FEEDBACK_UPDATE',
-        distribution: { got_it: 0, neutral: 0, confused: 0, lost: 0, total: 0 },
+        distribution: computeDistribution(room),
       });
     }
 
@@ -752,6 +762,7 @@ export class SessionManager {
     const room = this.rooms.get(sessionId);
     if (!room || !room.grantedAnnotator) return;
     if (!isValidStroke(points, color, width)) return;
+    if (!isValidSlideIndex(slideIndex, room.totalSlides)) return;
 
     this.broadcastToAll(room, {
       type: 'STUDENT_DRAW_STROKE',
@@ -767,6 +778,7 @@ export class SessionManager {
     const room = this.rooms.get(sessionId);
     if (!room || !room.grantedAnnotator) return;
     if (!isValidStroke(points, undefined, size)) return;
+    if (!isValidSlideIndex(slideIndex, room.totalSlides)) return;
 
     this.broadcastToAll(room, {
       type: 'STUDENT_ERASE_STROKE',
@@ -920,13 +932,34 @@ export class SessionManager {
       this.sendAnnotationAccessState(room);
     }
 
+    // Note whether the student had an active emoji BEFORE we remove them —
+    // if so, the lecturer's distribution drops by one and needs a refresh.
+    const hadEmoji = !!student?.currentEmoji;
+    const hadPace = room.paceFeedback.has(userId);
+
     room.students.delete(userId);
+    // Pace feedback is keyed per student too — clear it so the pace dist
+    // reflects only connected students, not "phantom votes" from people who
+    // already left.
+    room.paceFeedback.delete(userId);
+
     if (room.lecturerWs) {
       send(room.lecturerWs, {
         type: 'PARTICIPANT_COUNT',
         active: room.students.size,
         total: room.students.size,
       });
+      // Re-broadcast FEEDBACK_UPDATE and PACE_UPDATE if the departed student
+      // was contributing to either — otherwise the lecturer's panel shows
+      // stale phantom counts for a student who's no longer in the room.
+      if (hadEmoji) {
+        send(room.lecturerWs, { type: 'FEEDBACK_UPDATE', distribution: computeDistribution(room) });
+      }
+      if (hadPace) {
+        const dist = { slow: 0, ok: 0, fast: 0, total: 0 };
+        for (const v of room.paceFeedback.values()) { dist[v]++; dist.total++; }
+        send(room.lecturerWs, { type: 'PACE_UPDATE', distribution: dist });
+      }
     }
   }
 
@@ -1081,10 +1114,26 @@ export class SessionManager {
     room.annotationAccessQueue = [];
   }
 
-  private async flushFeedback(sessionId: string, room: SessionRoom, slideIndex: number) {
+  private async flushFeedback(
+    sessionId: string,
+    room: SessionRoom,
+    _prevSlide: number,
+    opts: { skipSlide?: number } = {},
+  ) {
+    // Persist each student's feedback against the slide THEY were actually
+    // looking at (student.slideIndex), not the lecturer's notion of the
+    // previous slide. If a student selected an emoji at the exact moment the
+    // lecturer clicked "next", student.slideIndex may already be the new
+    // slide; attributing that feedback to the OLD slide would corrupt
+    // per-slide analytics.
+    //
+    // skipSlide: if provided, students already on THAT slide are left alone
+    // (their emoji timer continues). Used by slide-change so we don't flush
+    // and then wipe the fresh vote that just arrived for the new slide.
     const now = Date.now();
     const inserts = [];
     for (const student of room.students.values()) {
+      if (opts.skipSlide !== undefined && student.slideIndex === opts.skipSlide) continue;
       if (student.currentEmoji && student.emojiSelectedAt) {
         const duration = now - student.emojiSelectedAt;
         inserts.push(
@@ -1092,7 +1141,7 @@ export class SessionManager {
             .values({
               sessionId,
               studentId: student.userId,
-              slideIndex,
+              slideIndex: student.slideIndex,
               emoji: student.currentEmoji,
               durationMs: duration,
             })
