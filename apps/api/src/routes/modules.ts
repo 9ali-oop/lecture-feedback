@@ -5,13 +5,16 @@ import { eq, count, and, sql } from 'drizzle-orm';
 import { db } from '../db/index.js';
 import { modules, moduleEnrollments, users } from '../db/schema.js';
 import { requireAuth } from '../middleware/auth.js';
+import { validateUuidParams } from '../middleware/uuidParams.js';
 import { MODULE_COLORS } from '@lecture-feedback/shared';
+import { deleteSessionFiles } from '../lib/storage.js';
 
 const validColorHexes = MODULE_COLORS.map((c) => c.hex) as [string, ...string[]];
 
 const router = new Hono();
 
 router.use('*', requireAuth());
+router.use('*', validateUuidParams);
 
 // List modules
 // - lecturer: their own modules
@@ -75,8 +78,8 @@ router.post(
   zValidator(
     'json',
     z.object({
-      code: z.string().min(1),
-      name: z.string().min(1),
+      code: z.string().min(1).max(20),
+      name: z.string().min(1).max(120),
       color: z.enum(validColorHexes),
     }),
   ),
@@ -99,8 +102,8 @@ router.patch(
   zValidator(
     'json',
     z.object({
-      code: z.string().min(1).optional(),
-      name: z.string().min(1).optional(),
+      code: z.string().min(1).max(20).optional(),
+      name: z.string().min(1).max(120).optional(),
       color: z.enum(validColorHexes).optional(),
     }),
   ),
@@ -193,6 +196,11 @@ router.delete('/:id', requireAuth('lecturer', 'admin'), async (c) => {
     await db.delete(paceFeedback).where(eq(paceFeedback.sessionId, sid));
     await db.delete(reflections).where(eq(reflections.sessionId, sid));
     await db.delete(sessions).where(eq(sessions.id, sid));
+    // Clean up PDF + whiteboard/annotation PNGs from disk. Without this,
+    // module delete leaks every session's files for the module — e.g.
+    // deleting a 20-session module would orphan 20 PDFs + hundreds of PNGs.
+    // Non-fatal: a disk-unlink failure shouldn't roll back the DB delete.
+    await deleteSessionFiles(sid).catch((err) => console.warn('[modules] deleteSessionFiles failed for', sid, err));
   }
 
   // Delete enrollments and the module itself

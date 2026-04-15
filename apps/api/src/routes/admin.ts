@@ -6,12 +6,14 @@ import { db } from '../db/index.js';
 import { users, studentProfiles } from '../db/schema.js';
 import { generateTotpSecret, generateQrCodeDataUrl } from '../lib/totp.js';
 import { requireAuth } from '../middleware/auth.js';
+import { validateUuidParams } from '../middleware/uuidParams.js';
 import { signToken } from '../lib/jwt.js';
 import type { Role } from '@lecture-feedback/shared';
 
 const router = new Hono();
 
 router.use('*', requireAuth('admin'));
+router.use('*', validateUuidParams);
 
 // List all users
 router.get('/users', async (c) => {
@@ -34,10 +36,10 @@ router.post(
   zValidator(
     'json',
     z.object({
-      email: z.string().email(),
-      name: z.string().min(1),
+      email: z.string().email().max(254),
+      name: z.string().min(1).max(120),
       role: z.enum(['lecturer', 'student']),
-      studentNumber: z.string().optional(),
+      studentNumber: z.string().max(30).optional(),
       englishProficiency: z
         .enum(['native', 'fluent', 'intermediate', 'beginner'])
         .optional(),
@@ -128,7 +130,22 @@ router.delete('/users/:id', async (c) => {
   if (id === sub) return c.json({ error: 'Cannot delete your own account' }, 400);
   const [target] = await db.select().from(users).where(eq(users.id, id));
   if (!target) return c.json({ error: 'User not found' }, 404);
-  await db.delete(users).where(eq(users.id, id));
+  try {
+    await db.delete(users).where(eq(users.id, id));
+  } catch (err) {
+    // Most common cause: FK violation because the user has activity
+    // (questions, feedback, notes, …). Rather than returning a raw 500
+    // with a PG error, surface a clear 409 so the admin UI can prompt
+    // the operator to either delete the module/session first or request
+    // a cascade-delete endpoint.
+    const msg = (err as Error).message ?? '';
+    if (/foreign key|violates|still referenced/i.test(msg)) {
+      return c.json({
+        error: 'User has activity in the system (questions, feedback, notes, etc.). Delete their modules or sessions first.',
+      }, 409);
+    }
+    throw err;
+  }
   return c.json({ ok: true });
 });
 

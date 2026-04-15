@@ -5,9 +5,12 @@ import { eq, and, sql } from 'drizzle-orm';
 import { db } from '../db/index.js';
 import { reflections, users } from '../db/schema.js';
 import { requireAuth } from '../middleware/auth.js';
+import { validateUuidParams } from '../middleware/uuidParams.js';
+import { requireSessionAccessById } from '../lib/access.js';
 
 const router = new Hono();
 router.use('*', requireAuth());
+router.use('*', validateUuidParams);
 
 // Submit reflection (student, one per session)
 router.post(
@@ -19,8 +22,11 @@ router.post(
   })),
   async (c) => {
     const { sessionId } = c.req.param();
-    const { sub } = c.get('jwtPayload');
+    const { sub, role } = c.get('jwtPayload');
     const { mostImportant, stillUnclear } = c.req.valid('json');
+
+    const access = await requireSessionAccessById(sessionId, role, sub);
+    if (!access.ok) return c.json({ error: access.message }, access.status);
 
     // Upsert
     await db.execute(sql`
@@ -37,6 +43,10 @@ router.post(
 // Get all reflections for a session (lecturer/admin)
 router.get('/session/:sessionId', requireAuth('lecturer', 'admin'), async (c) => {
   const { sessionId } = c.req.param();
+  const { sub, role } = c.get('jwtPayload');
+
+  const access = await requireSessionAccessById(sessionId, role, sub);
+  if (!access.ok) return c.json({ error: access.message }, access.status);
 
   const rows = await db
     .select({

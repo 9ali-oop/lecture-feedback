@@ -3,15 +3,23 @@ import { zValidator } from '@hono/zod-validator';
 import { z } from 'zod';
 import { eq, and } from 'drizzle-orm';
 import { db } from '../db/index.js';
-import { slideNotes } from '../db/schema.js';
+import { slideNotes, sessions } from '../db/schema.js';
 import { requireAuth } from '../middleware/auth.js';
+import { validateUuidParams } from '../middleware/uuidParams.js';
 import { sessionManager } from '../ws/session-manager.js';
+import { requireSessionAccessById, isValidSlideIndex } from '../lib/access.js';
 
 const router = new Hono();
+router.use('*', validateUuidParams);
 
 // Get all student notes for a session — anonymous (lecturer only)
 router.get('/session/:sessionId/all', requireAuth('lecturer', 'admin'), async (c) => {
   const { sessionId } = c.req.param();
+  const { sub, role } = c.get('jwtPayload');
+
+  const access = await requireSessionAccessById(sessionId, role, sub);
+  if (!access.ok) return c.json({ error: access.message }, access.status);
+
   const notes = await db
     .select({ id: slideNotes.id, sessionId: slideNotes.sessionId, slideIndex: slideNotes.slideIndex, content: slideNotes.content, updatedAt: slideNotes.updatedAt })
     .from(slideNotes)
@@ -24,7 +32,10 @@ router.get('/session/:sessionId/all', requireAuth('lecturer', 'admin'), async (c
 // Get all notes for a student in a session
 router.get('/session/:sessionId', requireAuth('student'), async (c) => {
   const { sessionId } = c.req.param();
-  const { sub } = c.get('jwtPayload');
+  const { sub, role } = c.get('jwtPayload');
+
+  const access = await requireSessionAccessById(sessionId, role, sub);
+  if (!access.ok) return c.json({ error: access.message }, access.status);
 
   const notes = await db
     .select()
@@ -47,14 +58,24 @@ router.get('/session/:sessionId', requireAuth('student'), async (c) => {
 router.put(
   '/session/:sessionId/slide/:slideIndex',
   requireAuth('student'),
-  zValidator('json', z.object({ content: z.string() })),
+  zValidator('json', z.object({ content: z.string().max(20_000) })),
   async (c) => {
     const { sessionId, slideIndex } = c.req.param();
     const { content } = c.req.valid('json');
-    const { sub } = c.get('jwtPayload');
+    const { sub, role } = c.get('jwtPayload');
+
+    const access = await requireSessionAccessById(sessionId, role, sub);
+    if (!access.ok) return c.json({ error: access.message }, access.status);
 
     const idx = parseInt(slideIndex, 10);
     if (isNaN(idx)) return c.json({ error: 'Invalid slide index' }, 400);
+
+    // Reject notes for slides beyond the deck (prevents polluting analytics
+    // with rows like "slide 99999 of 5").
+    const [sess] = await db.select({ totalSlides: sessions.totalSlides }).from(sessions).where(eq(sessions.id, sessionId));
+    if (sess && !isValidSlideIndex(idx, sess.totalSlides)) {
+      return c.json({ error: 'Slide index out of range' }, 400);
+    }
 
     const existing = await db
       .select()

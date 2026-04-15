@@ -73,3 +73,29 @@ export async function readAnnotation(sessionId: string, slideIndex: number): Pro
     return null;
   }
 }
+
+/**
+ * Remove every file tied to a session: the PDF and all whiteboard /
+ * annotation PNGs. Called when a session is deleted so we don't leak
+ * files on disk. Filenames are deterministic (prefixed with the sessionId),
+ * so we scan the uploads dir once and unlink the matching ones. Missing
+ * files are silently ignored — the delete is idempotent.
+ */
+export async function deleteSessionFiles(sessionId: string): Promise<void> {
+  let names: string[];
+  try {
+    names = await fs.readdir(uploadsDir);
+  } catch {
+    return; // uploads dir doesn't exist yet — nothing to clean
+  }
+  const prefixes = [
+    `session-${sessionId}.pdf`,
+    `whiteboard-${sessionId}-`,
+    `annotation-${sessionId}-`,
+  ];
+  await Promise.all(
+    names
+      .filter((n) => prefixes.some((p) => n === p || n.startsWith(p)))
+      .map((n) => fs.unlink(path.join(uploadsDir, n)).catch(() => { /* already gone */ })),
+  );
+}

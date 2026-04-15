@@ -1,15 +1,18 @@
 import { Hono } from 'hono';
 import { zValidator } from '@hono/zod-validator';
 import { z } from 'zod';
-import { eq, and, count as dbCount, sql } from 'drizzle-orm';
+import { eq, sql } from 'drizzle-orm';
 import { db } from '../db/index.js';
 import { polls, pollResponses } from '../db/schema.js';
 import { requireAuth } from '../middleware/auth.js';
+import { validateUuidParams } from '../middleware/uuidParams.js';
 import { sessionManager } from '../ws/session-manager.js';
+import { requireSessionAccessById } from '../lib/access.js';
 import type { PollResults } from '@lecture-feedback/shared';
 
 const router = new Hono();
 router.use('*', requireAuth());
+router.use('*', validateUuidParams);
 
 // Create a poll (lecturer only)
 router.post(
@@ -22,8 +25,12 @@ router.post(
     isTrueFalse: z.boolean().default(false),
   })),
   async (c) => {
+    const { sub, role } = c.get('jwtPayload');
     const { sessionId } = c.req.param();
     const { question, options, slideIndex, isTrueFalse } = c.req.valid('json');
+
+    const access = await requireSessionAccessById(sessionId, role, sub);
+    if (!access.ok) return c.json({ error: access.message }, access.status);
 
     const [poll] = await db.insert(polls).values({
       sessionId,
@@ -59,13 +66,26 @@ router.post(
   zValidator('json', z.object({ optionIndex: z.number().int().min(0) })),
   async (c) => {
     const { pollId } = c.req.param();
-    const { sub } = c.get('jwtPayload');
+    const { sub, role } = c.get('jwtPayload');
     const { optionIndex } = c.req.valid('json');
 
     // Only allow responses while the poll is active
     const targetPoll = (await db.select().from(polls).where(eq(polls.id, pollId)))[0];
     if (!targetPoll || targetPoll.status !== 'active') {
       return c.json({ error: 'Poll is not active' }, 409);
+    }
+
+    const access = await requireSessionAccessById(targetPoll.sessionId, role, sub);
+    if (!access.ok) return c.json({ error: access.message }, access.status);
+
+    // optionIndex zod only enforces >= 0; bound against the actual poll's
+    // options length so we don't persist indices that point past the deck.
+    // Out-of-range values would be filtered by computeResults (invisible in
+    // the UI), but editing the poll's options later could retroactively make
+    // them valid and spike the vote count for an option no student chose.
+    const options = targetPoll.options as string[];
+    if (optionIndex >= options.length) {
+      return c.json({ error: 'Invalid option index' }, 400);
     }
 
     // Upsert: insert or update if student changes their answer
@@ -90,6 +110,14 @@ router.patch(
   requireAuth('lecturer', 'admin'),
   async (c) => {
     const { pollId } = c.req.param();
+    const { sub, role } = c.get('jwtPayload');
+
+    const target = (await db.select().from(polls).where(eq(polls.id, pollId)))[0];
+    if (!target) return c.json({ error: 'Poll not found' }, 404);
+
+    const access = await requireSessionAccessById(target.sessionId, role, sub);
+    if (!access.ok) return c.json({ error: access.message }, access.status);
+
     await db.update(polls).set({ status: 'closed', closedAt: new Date() }).where(eq(polls.id, pollId));
 
     const poll = (await db.select().from(polls).where(eq(polls.id, pollId)))[0];
@@ -105,14 +133,24 @@ router.patch(
 // Get poll results
 router.get('/:pollId/results', async (c) => {
   const { pollId } = c.req.param();
+  const { sub, role } = c.get('jwtPayload');
   const poll = (await db.select().from(polls).where(eq(polls.id, pollId)))[0];
   if (!poll) return c.json({ error: 'Poll not found' }, 404);
+
+  const access = await requireSessionAccessById(poll.sessionId, role, sub);
+  if (!access.ok) return c.json({ error: access.message }, access.status);
+
   return c.json(await computeResults(poll));
 });
 
 // List polls for a session
 router.get('/session/:sessionId', async (c) => {
   const { sessionId } = c.req.param();
+  const { sub, role } = c.get('jwtPayload');
+
+  const access = await requireSessionAccessById(sessionId, role, sub);
+  if (!access.ok) return c.json({ error: access.message }, access.status);
+
   const rows = await db.select().from(polls).where(eq(polls.sessionId, sessionId));
   const results = [];
   for (const p of rows) {

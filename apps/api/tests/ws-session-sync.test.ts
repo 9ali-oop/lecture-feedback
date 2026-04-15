@@ -74,9 +74,12 @@ describe('WebSocket session sync (E2E)', () => {
     studentToken = stu.token;
     expect(stu.user.role).toBe('student');
 
-    // Find a live session
-    const modRes = await fetch(`${API}/modules`, { headers: { Authorization: `Bearer ${lecturerToken}` } });
-    const modules = await modRes.json() as any[];
+    // Find a live session in a module the TEST STUDENT is enrolled in.
+    // Using the lecturer's module list here would pick any live session they
+    // own — potentially one the test student can't connect to (access check
+    // in /ws rejects with "Forbidden"). Filter by the student's enrollment.
+    const modRes = await fetch(`${API}/modules`, { headers: { Authorization: `Bearer ${studentToken}` } });
+    const modules = (await modRes.json() as any[]).filter((m) => m.enrolled);
     for (const mod of modules) {
       const sessRes = await fetch(`${API}/sessions/module/${mod.id}`, {
         headers: { Authorization: `Bearer ${lecturerToken}` },

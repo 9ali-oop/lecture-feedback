@@ -29,6 +29,7 @@ import { verifyToken } from './lib/jwt.js';
 import { sessionManager } from './ws/session-manager.js';
 import { db } from './db/index.js';
 import { users, questions, questionUpvotes, pollResponses, polls } from './db/schema.js';
+import { requireSessionAccessById } from './lib/access.js';
 import { eq, and, count, sql } from 'drizzle-orm';
 import { ensureUploadsDir } from './lib/storage.js';
 import type { WsClientMessage } from '@lecture-feedback/shared';
@@ -115,6 +116,22 @@ app.get(
     const role = payload.role;
     const isDashboard = sessionId === 'dashboard';
 
+    // Session WS: enforce the same module-access rule as the REST endpoints.
+    // Without this, any authenticated user could connect to any sessionId and
+    // both read the live slide/feedback/annotation stream AND send FEEDBACK /
+    // QUESTION / POLL_RESPONSE into a session they have no business being in.
+    if (!isDashboard) {
+      const access = await requireSessionAccessById(sessionId, role, userId);
+      if (!access.ok) {
+        return {
+          onOpen(_, ws) {
+            ws.send(JSON.stringify({ type: 'ERROR', message: access.message }));
+            ws.close();
+          },
+        };
+      }
+    }
+
     // Dashboard connection: lightweight WS for live session notifications
     if (isDashboard) {
       return {
@@ -150,6 +167,10 @@ app.get(
           return;
         }
 
+        // Outer try/catch so a DB unique-violation (e.g. upvote race), a
+        // transient pg error, or any thrown handler doesn't become an
+        // unhandled promise rejection. We log and keep the socket alive.
+        try {
         switch (msg.type) {
           case 'PING':
             ws.send(JSON.stringify({ type: 'PONG' }));
@@ -238,10 +259,16 @@ app.get(
           // ── Q&A messages ─────────────────────────────────────────────────────
           case 'QUESTION':
             if (role === 'student') {
+              // Mirror the REST route's zod constraints (content: string
+              // min(1) max(500)). WS frames are JSON.parse + type assertion,
+              // so without this a forged message could insert a 10 MB row or
+              // an empty row into the DB and fan it out to the lecturer.
+              const content = typeof msg.content === 'string' ? msg.content.trim() : '';
+              if (content.length === 0 || content.length > 500) break;
               const [user] = await db.select().from(users).where(eq(users.id, userId));
               const [question] = await db
                 .insert(questions)
-                .values({ sessionId, studentId: userId, content: msg.content })
+                .values({ sessionId, studentId: userId, content })
                 .returning();
               sessionManager.handleNewQuestion(sessionId, {
                 id: question.id,
@@ -324,6 +351,9 @@ app.get(
           // ── Pace feedback ──────────────────────────────────────────────────
           case 'PACE_FEEDBACK':
             if (role === 'student') {
+              // Runtime validation — WS clients aren't bound by the TS union.
+              // An invalid value would otherwise throw at the enum column.
+              if (msg.value !== 'slow' && msg.value !== 'ok' && msg.value !== 'fast') break;
               sessionManager.handlePaceFeedback(sessionId, userId, msg.value);
               // Persist to DB (upsert)
               await db.execute(sql`
@@ -338,9 +368,12 @@ app.get(
           // ── Poll response (via WS for speed, also available via REST) ──────
           case 'POLL_RESPONSE':
             if (role === 'student') {
-              // Only allow responses while the poll is active
+              // Only allow responses while the poll is active AND belongs to
+              // the session this WS is bound to. Without the sessionId check,
+              // a student connected to session A could respond to polls in
+              // session B (where the WS-upgrade access check doesn't apply).
               const respondPoll = (await db.select().from(polls).where(eq(polls.id, msg.pollId)))[0];
-              if (respondPoll && respondPoll.status === 'active') {
+              if (respondPoll && respondPoll.status === 'active' && respondPoll.sessionId === sessionId) {
                 // Upsert: insert or update if student changes their answer
                 await db.execute(sql`
                   INSERT INTO poll_responses (id, poll_id, student_id, option_index, responded_at)
@@ -364,6 +397,10 @@ app.get(
           // ── Question upvote ────────────────────────────────────────────────
           case 'QUESTION_UPVOTE':
             if (role === 'student') {
+              // Same cross-session safety as POLL_RESPONSE above: verify the
+              // question belongs to the WS's bound session.
+              const [targetQ] = await db.select().from(questions).where(eq(questions.id, msg.questionId));
+              if (!targetQ || targetQ.sessionId !== sessionId) break;
               const upExisting = await db.select().from(questionUpvotes)
                 .where(and(eq(questionUpvotes.questionId, msg.questionId), eq(questionUpvotes.studentId, userId)));
               if (upExisting.length > 0) {
@@ -382,6 +419,9 @@ app.get(
 
           default:
             break;
+        }
+        } catch (err) {
+          console.error('[ws] message handler error:', (err as Error).message);
         }
       },
 

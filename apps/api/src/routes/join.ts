@@ -22,6 +22,9 @@ import { requireAuth } from '../middleware/auth.js';
 
 const router = new Hono();
 
+// Note: join has its own explicit UUID checks inline because it needs the
+// custom "Session not found" message for non-existent sessionIds anyway.
+
 function randomId(length = 8): string {
   // URL-safe short id. Not cryptographically meaningful beyond uniqueness.
   return randomBytes(length).toString('base64url').slice(0, length);

@@ -12,7 +12,7 @@ import type {
   PaceDistribution,
 } from '@lecture-feedback/shared';
 import { db } from '../db/index.js';
-import { feedbackEvents, sessionParticipants, sessions, slideTimings } from '../db/schema.js';
+import { feedbackEvents, modules, moduleEnrollments, sessionParticipants, sessions, slideTimings } from '../db/schema.js';
 import { eq, and, isNull } from 'drizzle-orm';
 import { computeSlideEngagement } from '../lib/engagement.js';
 
@@ -57,6 +57,43 @@ function send(ws: WSContext, msg: WsServerMessage) {
   } catch {
     // connection already closed
   }
+}
+
+// Incoming WS frames are JSON.parse + type-asserted, not validated. A
+// lecturer or granted annotator could send a DRAW_STROKE with a 10 M-point
+// array; we'd store it in room.annotations AND fan-out to every student in
+// the room — OOM-ing the server. Cap at a size that dwarfs any legitimate
+// pen stroke (~100 points for a few-second scribble at 60 Hz).
+const MAX_STROKE_POINTS = 5_000;
+const MAX_COLOR_LEN = 32; // CSS colours are rgb(…)/#hex — 32 chars is plenty
+// Hard ceiling for slideIndex even when we don't know totalSlides yet. A
+// malicious client could otherwise send `slideIndex: 9e9` and use it as a
+// Map key in room.annotations / noteActivity / confusionCounts — every
+// unique value adds a Map entry that survives the room. Caps the per-room
+// memory footprint for per-slide state maps. A deck that big doesn't exist.
+const MAX_SLIDE_INDEX = 10_000;
+
+function isValidSlideIndex(slideIndex: unknown, totalSlides: number): slideIndex is number {
+  if (typeof slideIndex !== 'number' || !Number.isInteger(slideIndex)) return false;
+  if (slideIndex < 0 || slideIndex > MAX_SLIDE_INDEX) return false;
+  if (totalSlides > 0 && slideIndex >= totalSlides) return false;
+  return true;
+}
+
+function isValidStroke(
+  points: unknown,
+  color?: unknown,
+  width?: unknown,
+): points is { x: number; y: number }[] {
+  if (!Array.isArray(points) || points.length === 0 || points.length > MAX_STROKE_POINTS) return false;
+  for (const p of points) {
+    if (!p || typeof p !== 'object') return false;
+    const { x, y } = p as { x: unknown; y: unknown };
+    if (typeof x !== 'number' || typeof y !== 'number' || !Number.isFinite(x) || !Number.isFinite(y)) return false;
+  }
+  if (color !== undefined && (typeof color !== 'string' || color.length > MAX_COLOR_LEN)) return false;
+  if (width !== undefined && (typeof width !== 'number' || !Number.isFinite(width) || width < 0 || width > 1)) return false;
+  return true;
 }
 
 function computeDistribution(room: SessionRoom): FeedbackDistribution {
@@ -139,18 +176,41 @@ export class SessionManager {
     this.dashboardClients.delete(userId);
   }
 
-  notifySessionLive(sessionId: string, moduleId: string, title: string) {
-    const msg: WsServerMessage = { type: 'SESSION_LIVE', sessionId, moduleId, title };
-    for (const ws of this.dashboardClients.values()) {
-      send(ws, msg);
+  /**
+   * Fan-out dashboard notifications to users who have access to the module.
+   * Previously we broadcast to every connected dashboard client, which leaked
+   * the existence of every live session in the system to every student —
+   * including modules they aren't enrolled in. Now we check each recipient
+   * against the module's lecturer + enrolled students before sending.
+   *
+   * Cost is one DB query per broadcast (rare events — session start / end),
+   * filtered in-memory against the set of currently-connected dashboards.
+   */
+  private async fanoutToModuleAudience(moduleId: string, msg: WsServerMessage) {
+    if (this.dashboardClients.size === 0) return;
+    const [mod] = await db.select().from(modules).where(eq(modules.id, moduleId));
+    if (!mod) return;
+    const enrolled = await db
+      .select({ studentId: moduleEnrollments.studentId })
+      .from(moduleEnrollments)
+      .where(eq(moduleEnrollments.moduleId, moduleId));
+    const allowed = new Set<string>([mod.lecturerId, ...enrolled.map((e) => e.studentId)]);
+    for (const [userId, ws] of this.dashboardClients) {
+      if (allowed.has(userId)) send(ws, msg);
     }
   }
 
-  notifySessionEnded(sessionId: string) {
+  notifySessionLive(sessionId: string, moduleId: string, title: string) {
+    const msg: WsServerMessage = { type: 'SESSION_LIVE', sessionId, moduleId, title };
+    void this.fanoutToModuleAudience(moduleId, msg);
+  }
+
+  async notifySessionEnded(sessionId: string) {
+    // Need the moduleId to filter. Look it up from the session row.
+    const [sess] = await db.select({ moduleId: sessions.moduleId }).from(sessions).where(eq(sessions.id, sessionId));
+    if (!sess) return;
     const msg: WsServerMessage = { type: 'SESSION_ENDED_DASHBOARD', sessionId };
-    for (const ws of this.dashboardClients.values()) {
-      send(ws, msg);
-    }
+    await this.fanoutToModuleAudience(sess.moduleId, msg);
   }
 
   async joinAsLecturer(sessionId: string, userId: string, ws: WSContext) {
@@ -391,6 +451,27 @@ export class SessionManager {
     const student = room.students.get(studentId);
     if (!student) return;
 
+    // Runtime emoji validation. The TS union only constrains the compiler —
+    // a raw WS client can send any string. The DB enum would reject it at
+    // insert time, but that throws inside a fire-and-forget .catch which
+    // still noises up the logs. Reject up front.
+    if (emoji !== 'got_it' && emoji !== 'neutral' && emoji !== 'confused' && emoji !== 'lost') {
+      return;
+    }
+
+    // Reject malformed slideIndex outright (NaN/Infinity/non-integer). The
+    // clamp below copes with out-of-range integers but Math.max/min with NaN
+    // silently propagates NaN into the DB insert, which then throws at the
+    // integer column. Reject up front so the socket stays quiet.
+    if (typeof slideIndex !== 'number' || !Number.isInteger(slideIndex)) return;
+
+    // Clamp to room's deck range. Without this, a client can claim feedback
+    // on an arbitrary slide (including negative or beyond totalSlides),
+    // polluting per-slide analytics forever.
+    const clampedSlide = room.totalSlides > 0
+      ? Math.max(0, Math.min(slideIndex, room.totalSlides - 1))
+      : Math.max(0, slideIndex);
+
     const now = Date.now();
 
     // Persist the previous emoji with duration
@@ -409,7 +490,7 @@ export class SessionManager {
 
     student.currentEmoji = emoji;
     student.emojiSelectedAt = now;
-    student.slideIndex = slideIndex;
+    student.slideIndex = clampedSlide;
 
     // Broadcast updated distribution to lecturer
     if (room.lecturerWs) {
@@ -466,6 +547,8 @@ export class SessionManager {
   handlePaceFeedback(sessionId: string, studentId: string, value: PaceValue) {
     const room = this.rooms.get(sessionId);
     if (!room) return;
+    // Runtime guard — see handleFeedback for why.
+    if (value !== 'slow' && value !== 'ok' && value !== 'fast') return;
     room.paceFeedback.set(studentId, value);
     // Compute distribution and send to lecturer
     if (room.lecturerWs) {
@@ -491,6 +574,23 @@ export class SessionManager {
   handleTextBoxSync(sessionId: string, slideIndex: number, textBoxes: Array<{ id: string; x: number; y: number; width: number; height: number; content: string; fontFamily: string; fontSize: number; color: string }>) {
     const room = this.rooms.get(sessionId);
     if (!room) return;
+    // Reject malformed / oversized payloads. textBoxes arrives from the
+    // lecturer's WS without runtime validation (JSON.parse + type assertion),
+    // so a forged message could carry a 1 MB `content` string, hundreds of
+    // boxes, or NaN coords — each fanned out to every student. Same shape
+    // as isValidStroke: bound count, string lengths, and numeric ranges.
+    if (!Array.isArray(textBoxes) || textBoxes.length > 50) return;
+    for (const b of textBoxes) {
+      if (!b || typeof b !== 'object') return;
+      const { id, x, y, width, height, content, fontFamily, fontSize, color } = b as Record<string, unknown>;
+      if (typeof id !== 'string' || id.length > 64) return;
+      if (typeof content !== 'string' || content.length > 5000) return;
+      if (typeof fontFamily !== 'string' || fontFamily.length > 64) return;
+      if (typeof color !== 'string' || color.length > MAX_COLOR_LEN) return;
+      for (const n of [x, y, width, height, fontSize]) {
+        if (typeof n !== 'number' || !Number.isFinite(n)) return;
+      }
+    }
     this.broadcastToStudents(room, { type: 'TEXT_BOX_SYNC', slideIndex, textBoxes });
   }
 
@@ -503,6 +603,7 @@ export class SessionManager {
   handleConfusionArea(sessionId: string, slideIndex: number, highlight: { shape: 'rect' | 'circle'; x: number; y: number; width: number; height: number }, emoji: 'confused' | 'lost') {
     const room = this.rooms.get(sessionId);
     if (!room?.lecturerWs) return;
+    if (!isValidSlideIndex(slideIndex, room.totalSlides)) return;
     // Track confusion count for engagement scoring
     room.confusionCounts.set(slideIndex, (room.confusionCounts.get(slideIndex) ?? 0) + 1);
     send(room.lecturerWs, { type: 'CONFUSION_AREA', slideIndex, highlight, emoji });
@@ -512,6 +613,7 @@ export class SessionManager {
   trackNoteActivity(sessionId: string, studentId: string, slideIndex: number) {
     const room = this.rooms.get(sessionId);
     if (!room) return;
+    if (!isValidSlideIndex(slideIndex, room.totalSlides)) return;
     if (!room.noteActivity.has(slideIndex)) room.noteActivity.set(slideIndex, new Set());
     room.noteActivity.get(slideIndex)!.add(studentId);
   }
@@ -526,6 +628,8 @@ export class SessionManager {
   handleDrawStroke(sessionId: string, points: { x: number; y: number }[], color: string, width: number, slideIndex: number) {
     const room = this.rooms.get(sessionId);
     if (!room) return;
+    if (!isValidStroke(points, color, width)) return;
+    if (!isValidSlideIndex(slideIndex, room.totalSlides)) return;
 
     const annotation: Annotation = {
       type: 'draw',
@@ -552,6 +656,9 @@ export class SessionManager {
   handleEraseStroke(sessionId: string, points: { x: number; y: number }[], size: number, slideIndex: number) {
     const room = this.rooms.get(sessionId);
     if (!room) return;
+    // size is the eraser radius; bound with the same width constraint.
+    if (!isValidStroke(points, undefined, size)) return;
+    if (!isValidSlideIndex(slideIndex, room.totalSlides)) return;
 
     const annotation: Annotation = {
       type: 'erase',
@@ -576,6 +683,7 @@ export class SessionManager {
   handleClearAnnotations(sessionId: string, slideIndex: number) {
     const room = this.rooms.get(sessionId);
     if (!room) return;
+    if (!isValidSlideIndex(slideIndex, room.totalSlides)) return;
 
     room.annotations.set(slideIndex, []);
 
@@ -643,6 +751,7 @@ export class SessionManager {
   handleStudentDrawStroke(sessionId: string, points: { x: number; y: number }[], color: string, width: number, slideIndex: number) {
     const room = this.rooms.get(sessionId);
     if (!room || !room.grantedAnnotator) return;
+    if (!isValidStroke(points, color, width)) return;
 
     this.broadcastToAll(room, {
       type: 'STUDENT_DRAW_STROKE',
@@ -657,6 +766,7 @@ export class SessionManager {
   handleStudentEraseStroke(sessionId: string, points: { x: number; y: number }[], size: number, slideIndex: number) {
     const room = this.rooms.get(sessionId);
     if (!room || !room.grantedAnnotator) return;
+    if (!isValidStroke(points, undefined, size)) return;
 
     this.broadcastToAll(room, {
       type: 'STUDENT_ERASE_STROKE',
@@ -718,6 +828,14 @@ export class SessionManager {
     const room = this.rooms.get(sessionId);
     if (!room) return;
 
+    // Re-entrancy guard: detach the room from the map *before* any awaits.
+    // endSession can be triggered from three paths (REST /end, WS SESSION_END,
+    // 90-min auto-end). Without this, two concurrent calls both pass the
+    // `get` check and both flush feedback — duplicating feedback_events rows
+    // and corrupting per-slide analytics. Delete up front so the second
+    // caller finds nothing and returns.
+    this.rooms.delete(sessionId);
+
     if (room.autoEndTimer) clearTimeout(room.autoEndTimer);
     if (room.engagementTimer) clearInterval(room.engagementTimer);
 
@@ -753,8 +871,8 @@ export class SessionManager {
 
     // Notify dashboard clients so the live banner disappears
     this.notifySessionEnded(sessionId);
-
-    this.rooms.delete(sessionId);
+    // Room was already detached from this.rooms at the top of this method
+    // for re-entrancy safety — no second delete needed.
   }
 
   scheduleAutoEnd(sessionId: string, minutes = 90) {

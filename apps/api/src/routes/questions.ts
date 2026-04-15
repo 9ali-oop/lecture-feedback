@@ -5,15 +5,23 @@ import { eq, count, sql } from 'drizzle-orm';
 import { db } from '../db/index.js';
 import { questions, users, questionUpvotes } from '../db/schema.js';
 import { requireAuth } from '../middleware/auth.js';
+import { validateUuidParams } from '../middleware/uuidParams.js';
 import { sessionManager } from '../ws/session-manager.js';
+import { requireSessionAccessById, isValidSlideIndex } from '../lib/access.js';
+import { sessions } from '../db/schema.js';
 
 const router = new Hono();
 
 router.use('*', requireAuth());
+router.use('*', validateUuidParams);
 
 // List questions for a session
 router.get('/session/:sessionId', async (c) => {
   const { sessionId } = c.req.param();
+  const { sub, role } = c.get('jwtPayload');
+
+  const access = await requireSessionAccessById(sessionId, role, sub);
+  if (!access.ok) return c.json({ error: access.message }, access.status);
 
   const upvoteCountSq = db
     .select({ questionId: questionUpvotes.questionId, cnt: count().as('cnt') })
@@ -63,7 +71,17 @@ router.post(
   async (c) => {
     const { sessionId } = c.req.param();
     const { content, slideIndex } = c.req.valid('json');
-    const { sub } = c.get('jwtPayload');
+    const { sub, role } = c.get('jwtPayload');
+
+    const access = await requireSessionAccessById(sessionId, role, sub);
+    if (!access.ok) return c.json({ error: access.message }, access.status);
+
+    if (slideIndex !== undefined) {
+      const [sess] = await db.select({ totalSlides: sessions.totalSlides }).from(sessions).where(eq(sessions.id, sessionId));
+      if (sess && !isValidSlideIndex(slideIndex, sess.totalSlides)) {
+        return c.json({ error: 'Slide index out of range' }, 400);
+      }
+    }
 
     const [question] = await db
       .insert(questions)
@@ -96,6 +114,13 @@ router.post(
 // Mark question as answered (lecturer only)
 router.patch('/:id/answer', requireAuth('lecturer', 'admin'), async (c) => {
   const { id } = c.req.param();
+  const { sub, role } = c.get('jwtPayload');
+
+  // Access check before the write: look up the question's session.
+  const [existing] = await db.select().from(questions).where(eq(questions.id, id));
+  if (!existing) return c.json({ error: 'Question not found' }, 404);
+  const access = await requireSessionAccessById(existing.sessionId, role, sub);
+  if (!access.ok) return c.json({ error: access.message }, access.status);
 
   const [question] = await db
     .update(questions)

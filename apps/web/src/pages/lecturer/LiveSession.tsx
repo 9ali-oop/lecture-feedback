@@ -683,10 +683,20 @@ export default function LiveSession() {
         {/* Row 1: session info + action buttons */}
         <div className="flex items-center justify-between gap-3 px-4 py-2">
           <div className="flex items-center gap-2 min-w-0 overflow-hidden">
-            <span className="inline-flex shrink-0 items-center gap-1.5 rounded-full bg-green-100 dark:bg-green-950 px-2.5 py-1 text-xs font-semibold text-green-700 dark:text-green-400 ring-1 ring-green-300 dark:ring-green-800">
-              <span className="h-1.5 w-1.5 rounded-full bg-green-400 animate-pulse" />
-              Live
-            </span>
+            {session?.status === 'live' ? (
+              <span className="inline-flex shrink-0 items-center gap-1.5 rounded-full bg-green-100 dark:bg-green-950 px-2.5 py-1 text-xs font-semibold text-green-700 dark:text-green-400 ring-1 ring-green-300 dark:ring-green-800">
+                <span className="h-1.5 w-1.5 rounded-full bg-green-400 animate-pulse" />
+                Live
+              </span>
+            ) : session?.status === 'ended' ? (
+              <span className="inline-flex shrink-0 items-center rounded-full bg-gray-100 dark:bg-gray-800 px-2.5 py-1 text-xs font-medium text-gray-600 dark:text-gray-400 ring-1 ring-gray-200 dark:ring-gray-700">
+                Ended
+              </span>
+            ) : (
+              <span className="inline-flex shrink-0 items-center rounded-full bg-gray-100 dark:bg-gray-800 px-2.5 py-1 text-xs font-medium text-gray-600 dark:text-gray-400 ring-1 ring-gray-200 dark:ring-gray-700">
+                Scheduled
+              </span>
+            )}
             <span className="truncate text-sm font-medium text-gray-800 dark:text-gray-200">{session?.title}</span>
             {whiteboardMode && (
               <span className="rounded-full bg-amber-100 dark:bg-amber-800/50 px-2 py-0.5 text-[10px] font-semibold text-amber-700 dark:text-amber-300 ring-1 ring-amber-300 dark:ring-amber-700">

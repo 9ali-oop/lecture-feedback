@@ -7,13 +7,20 @@ import {
   users, studentProfiles,
 } from '../db/schema.js';
 import { requireAuth } from '../middleware/auth.js';
+import { validateUuidParams } from '../middleware/uuidParams.js';
+import { requireModuleAccess } from '../lib/access.js';
 import type { StudentEngagement, ModuleAnalytics } from '@lecture-feedback/shared';
 
 const router = new Hono();
 router.use('*', requireAuth('lecturer', 'admin'));
+router.use('*', validateUuidParams);
 
 router.get('/module/:moduleId', async (c) => {
   const { moduleId } = c.req.param();
+  const { sub, role } = c.get('jwtPayload');
+
+  const access = await requireModuleAccess(moduleId, role, sub);
+  if (!access.ok) return c.json({ error: access.message }, access.status);
 
   // All sessions for this module
   const allSessions = await db.select().from(sessions).where(eq(sessions.moduleId, moduleId));

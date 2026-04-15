@@ -80,7 +80,11 @@ export default function StudentSession() {
   const [questionSent, setQuestionSent] = useState(false);
   const [questionError, setQuestionError] = useState('');
   const [showQA, setShowQA] = useState(false); // desktop-only toggle
-  const [showPanel, setShowPanel] = useState(() => window.innerWidth > 900);
+  // Only auto-open the side panel on true desktop widths (lg breakpoint).
+  // Below this the strip handles primary input and the panel opens on demand
+  // via the tab bar — otherwise landscape phones (~900px) would start with
+  // the panel open and eat the slide space.
+  const [showPanel, setShowPanel] = useState(() => window.innerWidth >= 1024);
   const [focusMode, setFocusMode] = useState(false);
   // Bottom-tab selection on mobile: feedback | qa | notes
   const [activeTab, setActiveTab] = useState<'feedback' | 'qa' | 'notes'>('feedback');
@@ -96,11 +100,11 @@ export default function StudentSession() {
       if (e.key === 'f' || e.key === 'F') {
         setFocusMode((v) => !v);
         if (!focusMode) setShowPanel(false);
-        else setShowPanel(window.innerWidth > 900);
+        else setShowPanel(window.innerWidth >= 1024);
       }
       if (e.key === 'Escape' && focusMode) {
         setFocusMode(false);
-        setShowPanel(window.innerWidth > 900);
+        setShowPanel(window.innerWidth >= 1024);
       }
       // Slide navigation
       if (e.key === 'ArrowRight' || e.key === 'ArrowDown') {
@@ -696,7 +700,7 @@ export default function StudentSession() {
           )}
           <button
             onClick={() => setShowQA((v) => !v)}
-            className={`hidden md:inline-flex rounded-lg border px-3 py-1.5 text-xs font-medium transition ${
+            className={`hidden lg:inline-flex rounded-lg border px-3 py-1.5 text-xs font-medium transition ${
               showQA ? 'border-blue-500 bg-blue-50 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300' : 'border-gray-200 dark:border-gray-700 text-gray-600 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-gray-800'
             }`}
           >
@@ -789,7 +793,7 @@ export default function StudentSession() {
         </div>
       )}
 
-      <div className="flex flex-1 flex-col md:flex-row overflow-hidden">
+      <div className="flex flex-1 flex-col lg:flex-row overflow-hidden">
         {/* Slides column */}
         <div className="flex flex-1 flex-col overflow-hidden min-h-0">
           {/* PDF / Whiteboard — tap-to-exit-fullscreen when in focus mode (and not annotating) */}
@@ -816,7 +820,7 @@ export default function StudentSession() {
               </div>
             )}
             {session?.hasPdf || viewMode === 'whiteboard' ? (
-              <div className="relative w-full">
+              <div className="relative w-full h-full flex items-center justify-center">
                 <PdfViewer
                   url={api.pdfUrl(sessionId!)}
                   currentPage={currentSlide}
@@ -824,7 +828,7 @@ export default function StudentSession() {
                   token={token}
                   onCanvasResize={handleCanvasResize}
                   className="rounded-xl shadow-sm"
-                  scaleMode="width"
+                  scaleMode="contain"
                   whiteboardMode={viewMode === 'whiteboard'}
                   {...(annotationAccess.status === 'granted' ? {
                     overlayRef,
@@ -926,8 +930,11 @@ export default function StudentSession() {
             )}
           </div>
 
-          {/* Slide navigation */}
-          <div className={`${focusMode ? 'hidden' : 'flex'} shrink-0 items-center justify-center gap-2 md:gap-3 border-t border-gray-100 dark:border-gray-800 bg-white dark:bg-gray-900 py-2 md:py-2.5`}>
+          {/* Slide navigation. Hidden in focus mode AND in landscape on phones
+              — landscape phone viewports are vertically starved; every row of
+              chrome crowds the slide. Re-shown at lg (desktop/tablet where
+              row layout kicks in and there's room). */}
+          <div className={`${focusMode ? 'hidden' : 'flex landscape:hidden lg:flex'} shrink-0 items-center justify-center gap-2 md:gap-3 border-t border-gray-100 dark:border-gray-800 bg-white dark:bg-gray-900 py-2 md:py-2.5`}>
             <button onClick={() => goToSlide(0)} disabled={currentSlide === 0} className="rounded-lg p-2.5 md:p-1.5 text-gray-400 transition hover:bg-gray-100 dark:hover:bg-gray-800 disabled:opacity-30 min-h-[40px] min-w-[40px]">⏮</button>
             <button onClick={() => goToSlide(currentSlide - 1)} disabled={currentSlide === 0} className="rounded-lg px-4 py-2.5 md:px-3 md:py-1.5 text-sm text-gray-600 dark:text-gray-400 transition hover:bg-gray-100 dark:hover:bg-gray-800 disabled:opacity-30 min-h-[40px]">← Prev</button>
             <span className="min-w-[70px] text-center text-sm font-mono text-gray-500">
@@ -941,7 +948,7 @@ export default function StudentSession() {
         {/* Panel toggle (desktop only — vertical edge strip) */}
         <button
           onClick={() => setShowPanel((v) => !v)}
-          className="hidden md:flex shrink-0 w-6 items-center justify-center border-l border-gray-100 dark:border-gray-800 bg-gray-50 dark:bg-gray-900/50 text-gray-400 transition hover:bg-gray-100 dark:hover:bg-gray-800 hover:text-gray-600 dark:hover:text-gray-300"
+          className="hidden lg:flex shrink-0 w-6 items-center justify-center border-l border-gray-100 dark:border-gray-800 bg-gray-50 dark:bg-gray-900/50 text-gray-400 transition hover:bg-gray-100 dark:hover:bg-gray-800 hover:text-gray-600 dark:hover:text-gray-300"
           title={showPanel ? 'Hide panel' : 'Show panel'}
         >
           <svg className={`h-4 w-4 transition-transform ${showPanel ? '' : 'rotate-180'}`} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
@@ -954,7 +961,7 @@ export default function StudentSession() {
             lecturer. Replaces the old tap-tab -> open-drawer -> find-button
             flow with a single one-tap action. Spatial memory: buttons stay
             in the same position so the thumb finds them blind. */}
-        <div className="md:hidden shrink-0 flex border-t border-gray-100 dark:border-gray-800 bg-white dark:bg-gray-900">
+        <div className="lg:hidden shrink-0 flex border-t border-gray-100 dark:border-gray-800 bg-white dark:bg-gray-900">
           {EMOJIS.map((e) => {
             const isSelected = selectedEmoji === e.id;
             const isFlashing = flashEmoji === e.id;
@@ -984,7 +991,7 @@ export default function StudentSession() {
         {isConfused && !confusionSent && !(showPanel && activeTab === 'feedback') && (
           <button
             onClick={() => { setActiveTab('feedback'); setShowPanel(true); }}
-            className="md:hidden shrink-0 flex items-center justify-center gap-2 border-t border-yellow-200 dark:border-yellow-800 bg-yellow-50 dark:bg-yellow-900/30 px-4 py-2 text-xs font-medium text-yellow-800 dark:text-yellow-300 active:bg-yellow-100 dark:active:bg-yellow-900/50"
+            className="lg:hidden shrink-0 flex items-center justify-center gap-2 border-t border-yellow-200 dark:border-yellow-800 bg-yellow-50 dark:bg-yellow-900/30 px-4 py-2 text-xs font-medium text-yellow-800 dark:text-yellow-300 active:bg-yellow-100 dark:active:bg-yellow-900/50"
           >
             <span>💬</span>
             <span>Add detail? (optional)</span>
@@ -993,7 +1000,7 @@ export default function StudentSession() {
 
         {/* Mobile tab bar — Q&A and Notes (Feedback moved to the always-on
             strip above; this tab still holds pace + confusion-detail). */}
-        <div className={`${focusMode ? 'hidden' : 'flex'} md:hidden shrink-0 border-t border-gray-100 dark:border-gray-800 bg-white dark:bg-gray-900`}>
+        <div className={`${focusMode ? 'hidden' : 'flex landscape:hidden lg:hidden'} lg:hidden shrink-0 border-t border-gray-100 dark:border-gray-800 bg-white dark:bg-gray-900`}>
           {(['feedback', 'qa', 'notes'] as const).map((t) => {
             const label = t === 'feedback' ? 'Feedback' : t === 'qa' ? 'Q\u0026A' : 'Notes';
             const isActive = showPanel && activeTab === t;
@@ -1029,10 +1036,10 @@ export default function StudentSession() {
         {/* Right panel (desktop sidebar) / bottom drawer (mobile).
             Hidden entirely in fullscreen so it can't partially overlap the slide
             and leave the user stuck with half-visible emoji buttons. */}
-        <div className={`flex shrink-0 flex-col border-t md:border-t-0 md:border-l border-gray-100 dark:border-gray-800 bg-white dark:bg-gray-900 overflow-hidden transition-all duration-200 ${focusMode ? 'hidden md:flex' : ''} ${
+        <div className={`flex shrink-0 flex-col border-t lg:border-t-0 lg:border-l border-gray-100 dark:border-gray-800 bg-white dark:bg-gray-900 overflow-hidden transition-all duration-200 ${focusMode ? 'hidden lg:flex' : ''} ${
           showPanel
-            ? 'h-[55dvh] landscape:h-[40dvh] md:h-auto md:w-72'
-            : 'h-0 md:h-auto md:w-0 md:border-l-0'
+            ? 'h-[55dvh] landscape:h-[40dvh] lg:h-auto lg:w-72'
+            : 'h-0 lg:h-auto lg:w-0 lg:border-l-0'
         }`}>
           {activeTab === 'qa' ? (
             /* Q&A panel */
@@ -1093,10 +1100,10 @@ export default function StudentSession() {
           ) : (
             /* Feedback panel — emoji, confusion, pace */
             <div className="flex flex-1 flex-col overflow-y-auto p-4 space-y-4">
-              {/* Emoji feedback — hidden on mobile because the always-on
+              {/* Emoji feedback — hidden below lg because the always-on
                   reaction strip below the slide already handles this. Kept
-                  for desktop where there's no strip. */}
-              <div className="hidden md:block">
+                  for desktop/large-tablet where there's no strip. */}
+              <div className="hidden lg:block">
                 <h3 className="mb-3 text-sm font-semibold text-gray-900 dark:text-gray-100">How are you doing?</h3>
                 <div className="grid grid-cols-2 gap-2">
                   {EMOJIS.map((e) => (

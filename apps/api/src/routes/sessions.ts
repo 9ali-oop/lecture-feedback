@@ -5,37 +5,21 @@ import { eq, and, count, countDistinct } from 'drizzle-orm';
 import { db } from '../db/index.js';
 import { sessions, modules, moduleEnrollments, feedbackEvents, sessionParticipants, slideTimings, questions, users, slideWhiteboards, slideAnnotations, slideNotes, confusionContexts, questionUpvotes, polls, pollResponses, paceFeedback, reflections, studentProfiles } from '../db/schema.js';
 import { requireAuth } from '../middleware/auth.js';
-import { savePdf, readPdf, saveWhiteboard, readWhiteboard, saveAnnotation, readAnnotation } from '../lib/storage.js';
+import { validateUuidParams } from '../middleware/uuidParams.js';
+import { savePdf, readPdf, saveWhiteboard, readWhiteboard, saveAnnotation, readAnnotation, deleteSessionFiles } from '../lib/storage.js';
 import { sessionManager } from '../ws/session-manager.js';
 import { PDFDocument, rgb, StandardFonts } from 'pdf-lib';
 import type { SlideReport, FeedbackDistribution } from '@lecture-feedback/shared';
 import { generateRecommendations } from '../lib/recommendations.js';
+import { requireModuleAccess } from '../lib/access.js';
 
 const router = new Hono();
 
 router.use('*', requireAuth());
+router.use('*', validateUuidParams);
 
-/** Check that the current user may access the given session's module. */
-async function requireSessionAccess(
-  sessionModuleId: string,
-  role: string,
-  sub: string,
-): Promise<{ ok: true } | { ok: false; status: 403 | 404; message: string }> {
-  const mod = (await db.select().from(modules).where(eq(modules.id, sessionModuleId)))[0];
-  if (!mod) return { ok: false, status: 404, message: 'Module not found' };
-  if (role === 'admin') return { ok: true };
-  if (role === 'lecturer') {
-    if (mod.lecturerId !== sub) return { ok: false, status: 403, message: 'Forbidden' };
-    return { ok: true };
-  }
-  // student -- must be enrolled
-  const enrollment = await db
-    .select()
-    .from(moduleEnrollments)
-    .where(and(eq(moduleEnrollments.moduleId, sessionModuleId), eq(moduleEnrollments.studentId, sub)));
-  if (enrollment.length === 0) return { ok: false, status: 403, message: 'Forbidden' };
-  return { ok: true };
-}
+/** Alias — historical callers in this file use requireSessionAccess. */
+const requireSessionAccess = requireModuleAccess;
 
 // List sessions for a module
 router.get('/module/:moduleId', async (c) => {
@@ -126,7 +110,7 @@ router.get('/:id', async (c) => {
 router.post(
   '/',
   requireAuth('lecturer', 'admin'),
-  zValidator('json', z.object({ moduleId: z.string().uuid(), title: z.string().min(1) })),
+  zValidator('json', z.object({ moduleId: z.string().uuid(), title: z.string().min(1).max(200) })),
   async (c) => {
     const { moduleId, title } = c.req.valid('json');
     const { sub } = c.get('jwtPayload');
@@ -145,6 +129,10 @@ router.post(
 );
 
 // Upload PDF for a session
+// Cap PDF uploads at 50 MB. A lecture deck rarely exceeds 15–20 MB, and
+// without this a stray click on a video file would fill the uploads dir.
+const MAX_PDF_BYTES = 50 * 1024 * 1024;
+
 router.post('/:id/pdf', requireAuth('lecturer', 'admin'), async (c) => {
   const { sub, role } = c.get('jwtPayload');
   const { id } = c.req.param();
@@ -153,6 +141,14 @@ router.post('/:id/pdf', requireAuth('lecturer', 'admin'), async (c) => {
 
   const access = await requireSessionAccess(session.moduleId, role, sub);
   if (!access.ok) return c.json({ error: access.message }, access.status);
+
+  // Early reject via Content-Length. The check below on buffer.length is the
+  // authoritative one (clients could lie in the header), but rejecting before
+  // parseBody saves us from buffering the whole payload into memory first.
+  const contentLength = Number(c.req.header('content-length') ?? 0);
+  if (contentLength > MAX_PDF_BYTES) {
+    return c.json({ error: 'PDF too large (max 50 MB)' }, 413);
+  }
 
   const body = await c.req.parseBody();
   const file = body['file'];
@@ -163,6 +159,16 @@ router.post('/:id/pdf', requireAuth('lecturer', 'admin'), async (c) => {
 
   const arrayBuffer = await file.arrayBuffer();
   const buffer = Buffer.from(arrayBuffer);
+
+  if (buffer.length > MAX_PDF_BYTES) {
+    return c.json({ error: 'PDF too large (max 50 MB)' }, 413);
+  }
+  // PDF magic bytes: "%PDF" (25 50 44 46). Rejects someone renaming a .mp4
+  // to .pdf to exhaust disk or to trick pdfjs into parsing arbitrary input.
+  if (buffer.length < 4 || buffer.subarray(0, 4).toString('ascii') !== '%PDF') {
+    return c.json({ error: 'File is not a valid PDF' }, 400);
+  }
+
   const filePath = await savePdf(id, buffer);
 
   // Reset slide state on replace — the new PDF likely has a different page count,
@@ -272,14 +278,24 @@ router.post(
   '/:id/whiteboards',
   requireAuth('lecturer', 'admin'),
   zValidator('json', z.object({
+    // Cap the batch size as well as each image. Without a max on `slides`, a
+    // lecturer could POST 1000 × 5 MB images = ~5 GB streamed to disk and
+    // parsed into memory first. Typical lecture decks are 20–50 slides, so
+    // 500 is a very generous upper bound that still prevents disk exhaustion.
     slides: z.array(z.object({
       slideIndex: z.number().int().min(0),
-      imageData: z.string(), // base64 PNG (data:image/png;base64,...)
-    })),
+      imageData: z.string().max(7_500_000), // base64 PNG — ~5MB decoded
+    })).max(500),
   })),
   async (c) => {
+    const { sub, role } = c.get('jwtPayload');
     const { id } = c.req.param();
     const { slides } = c.req.valid('json');
+
+    const [session] = await db.select().from(sessions).where(eq(sessions.id, id));
+    if (!session) return c.json({ error: 'Session not found' }, 404);
+    const access = await requireSessionAccess(session.moduleId, role, sub);
+    if (!access.ok) return c.json({ error: access.message }, access.status);
 
     for (const { slideIndex, imageData } of slides) {
       // Strip data URL prefix
@@ -324,12 +340,19 @@ router.post(
   zValidator('json', z.object({
     slides: z.array(z.object({
       slideIndex: z.number().int().min(0),
-      imageData: z.string(),
-    })),
+      imageData: z.string().max(7_500_000), // ~5MB decoded
+    })).max(500), // match whiteboards cap — see comment there
   })),
   async (c) => {
+    const { sub, role } = c.get('jwtPayload');
     const { id } = c.req.param();
     const { slides } = c.req.valid('json');
+
+    const [session] = await db.select().from(sessions).where(eq(sessions.id, id));
+    if (!session) return c.json({ error: 'Session not found' }, 404);
+    const access = await requireSessionAccess(session.moduleId, role, sub);
+    if (!access.ok) return c.json({ error: access.message }, access.status);
+
     for (const { slideIndex, imageData } of slides) {
       const base64 = imageData.replace(/^data:image\/png;base64,/, '');
       const buffer = Buffer.from(base64, 'base64');
@@ -874,6 +897,11 @@ router.delete('/:id', requireAuth('lecturer', 'admin'), async (c) => {
   const session = (await db.select().from(sessions).where(eq(sessions.id, id)))[0];
   if (!session) return c.json({ error: 'Session not found' }, 404);
 
+  // Access check BEFORE any writes — otherwise a non-owner could force-end
+  // another lecturer's ghost-live session before being rejected.
+  const access = await requireSessionAccess(session.moduleId, role, sub);
+  if (!access.ok) return c.json({ error: access.message }, access.status);
+
   if (session.status === 'live') {
     // Allow deleting ghost live sessions (no active room in memory)
     const hasActiveRoom = sessionManager.hasRoom(id);
@@ -881,9 +909,6 @@ router.delete('/:id', requireAuth('lecturer', 'admin'), async (c) => {
     // Force-end the ghost session first
     await db.update(sessions).set({ status: 'ended', endedAt: new Date() }).where(eq(sessions.id, id));
   }
-
-  const access = await requireSessionAccess(session.moduleId, role, sub);
-  if (!access.ok) return c.json({ error: access.message }, access.status);
 
   // Delete all related rows (no cascade set up on session FK)
   const sid = eq(feedbackEvents.sessionId, id);
@@ -919,6 +944,11 @@ router.delete('/:id', requireAuth('lecturer', 'admin'), async (c) => {
 
   // Finally delete the session itself
   await db.delete(sessions).where(eq(sessions.id, id));
+
+  // Remove the session's PDF + whiteboard/annotation PNGs from disk.
+  // Without this, every delete leaks files in UPLOADS_DIR indefinitely.
+  // Failures here are non-fatal — the DB row is already gone.
+  await deleteSessionFiles(id).catch((err) => console.warn('[sessions] deleteSessionFiles failed for', id, err));
 
   return c.json({ ok: true });
 });

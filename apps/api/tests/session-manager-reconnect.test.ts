@@ -23,10 +23,23 @@ vi.mock('../src/db/index.js', () => {
     p.set = () => thenable(resolveValue);
     return p;
   };
+  // notifySessionLive/Ended now filter the dashboard broadcast to the
+  // module's audience (lecturer + enrolled students). The dashboard race
+  // test uses 'user1' / 'mod1', so the mocked SELECTs return a matching
+  // row so 'user1' passes the audience check.
+  const selectRow: any = {
+    // satisfies fanoutToModuleAudience (modules + enrollments)
+    lecturerId: 'user1',
+    studentId: 'user1',
+    moduleId: 'mod1',
+    // satisfies join*/endSession session lookup (no-op defaults)
+    currentSlideIndex: 0,
+    totalSlides: 0,
+  };
   return {
     db: {
       insert: () => ({ values: () => thenable() }),
-      select: () => ({ from: () => ({ where: () => thenable([]) }) }),
+      select: () => ({ from: () => ({ where: () => thenable([selectRow]) }) }),
       update: () => ({ set: () => ({ where: () => thenable() }) }),
     },
   };
@@ -124,7 +137,7 @@ describe('SessionManager — reconnect race', () => {
     expect(newS.closed).toBe(false);
   });
 
-  it('stale dashboard onClose does not drop a reconnected user from notifySessionLive targets', () => {
+  it('stale dashboard onClose does not drop a reconnected user from notifySessionLive targets', async () => {
     const oldD = mkWs();
     sm.joinDashboard('user1', oldD.ws);
 
@@ -138,6 +151,10 @@ describe('SessionManager — reconnect race', () => {
     sm.disconnectDashboard('user1', oldD.ws);
 
     sm.notifySessionLive('sid', 'mod1', 'Live');
+    // notifySessionLive fires fanoutToModuleAudience as void (await'd DB
+    // round-trip internally). Flush microtasks so the broadcast lands before
+    // the assertion.
+    await new Promise((r) => setTimeout(r, 0));
     expect(newD.sent.some((m) => m.type === 'SESSION_LIVE')).toBe(true);
   });
 

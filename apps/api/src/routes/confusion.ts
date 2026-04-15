@@ -3,13 +3,16 @@ import { zValidator } from '@hono/zod-validator';
 import { z } from 'zod';
 import { eq } from 'drizzle-orm';
 import { db } from '../db/index.js';
-import { confusionContexts, users } from '../db/schema.js';
+import { confusionContexts, users, sessions } from '../db/schema.js';
 import { requireAuth } from '../middleware/auth.js';
+import { validateUuidParams } from '../middleware/uuidParams.js';
 import { sessionManager } from '../ws/session-manager.js';
+import { requireSessionAccessById, isValidSlideIndex } from '../lib/access.js';
 
 const router = new Hono();
 
 router.use('*', requireAuth());
+router.use('*', validateUuidParams);
 
 // Submit confusion context (student only)
 router.post(
@@ -20,24 +23,38 @@ router.post(
     z.object({
       slideIndex: z.number().int().min(0),
       emoji: z.enum(['confused', 'lost']),
+      // Cap highlight count + coordinate range. Without these, a student
+      // could POST 10k highlights — each one fans out via
+      // sessionManager.handleConfusionArea → lecturer broadcast — DoSing the
+      // lecturer UI and persisting a huge JSON blob. Coordinates are
+      // normalised (0–1) on the client, so anything outside [0,1] is junk.
       highlights: z
         .array(
           z.object({
             shape: z.enum(['rect', 'circle']),
-            x: z.number(),
-            y: z.number(),
-            width: z.number(),
-            height: z.number(),
+            x: z.number().min(0).max(1),
+            y: z.number().min(0).max(1),
+            width: z.number().min(0).max(1),
+            height: z.number().min(0).max(1),
           }),
         )
+        .max(20)
         .default([]),
       explanation: z.string().max(500).optional(),
     }),
   ),
   async (c) => {
     const { sessionId } = c.req.param();
-    const { sub } = c.get('jwtPayload');
+    const { sub, role } = c.get('jwtPayload');
     const { slideIndex, emoji, highlights, explanation } = c.req.valid('json');
+
+    const access = await requireSessionAccessById(sessionId, role, sub);
+    if (!access.ok) return c.json({ error: access.message }, access.status);
+
+    const [sess] = await db.select({ totalSlides: sessions.totalSlides }).from(sessions).where(eq(sessions.id, sessionId));
+    if (sess && !isValidSlideIndex(slideIndex, sess.totalSlides)) {
+      return c.json({ error: 'Slide index out of range' }, 400);
+    }
 
     // Save confusion context
     const [row] = await db
@@ -64,6 +81,10 @@ router.post(
 // List confusion contexts for a session (lecturer/admin)
 router.get('/session/:sessionId', requireAuth('lecturer', 'admin'), async (c) => {
   const { sessionId } = c.req.param();
+  const { sub, role } = c.get('jwtPayload');
+
+  const access = await requireSessionAccessById(sessionId, role, sub);
+  if (!access.ok) return c.json({ error: access.message }, access.status);
 
   const rows = await db
     .select({
