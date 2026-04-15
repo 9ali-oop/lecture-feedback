@@ -1,6 +1,10 @@
 node_modules
 dist
 .env
+# Catch env-style files Neon/Render/etc download when you hit "download .env".
+# They look like env.txt / production.env / neon.env and have real secrets.
+*.env
+env.txt
 *.local
 uploads/
 .DS_Store
