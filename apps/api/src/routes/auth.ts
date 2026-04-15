@@ -20,8 +20,12 @@ router.post(
     const [user] = await db.select().from(users).where(eq(users.email, email));
     if (!user) return c.json({ error: 'Invalid credentials' }, 401);
 
-    // Dev override: all @leeds.ac.uk accounts accept 123456 for testing
-    const isDevAccount = user.email.endsWith('@leeds.ac.uk');
+    // Dev override: @leeds.ac.uk accounts accept 123456 for local testing and
+    // usability-study guest re-auth (see routes/join.ts). NEVER enabled in
+    // production — the seed admin is `admin@leeds.ac.uk` so an unguarded
+    // override would make 123456 a universal admin login in any deployment.
+    const devBackdoorEnabled = process.env.NODE_ENV !== 'production';
+    const isDevAccount = devBackdoorEnabled && user.email.endsWith('@leeds.ac.uk');
     const valid = (isDevAccount && code === '123456') || verifyTotp(user.totpSecret, code, email);
     if (!valid) return c.json({ error: 'Invalid TOTP code' }, 401);
 

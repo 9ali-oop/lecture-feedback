@@ -4,3 +4,5 @@ dist
 *.local
 uploads/
 .DS_Store
+# One-off generated TOTP enrolment QRs. These are secrets-equivalent.
+*-totp-qr.png
