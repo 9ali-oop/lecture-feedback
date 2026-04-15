@@ -19,6 +19,7 @@ import { sessions, users, studentProfiles, moduleEnrollments } from '../db/schem
 import { generateTotpSecret } from '../lib/totp.js';
 import { signToken } from '../lib/jwt.js';
 import { requireAuth } from '../middleware/auth.js';
+import { rateLimit } from '../middleware/rateLimit.js';
 
 const router = new Hono();
 
@@ -61,8 +62,12 @@ router.post('/:sessionId/enroll', requireAuth('student'), async (c) => {
   return c.json({ ok: true, sessionId: session.id });
 });
 
+// 10 guest creations per IP per minute is enough for a shared classroom
+// router (NATed phones) but blocks scripted spam. Real participants only
+// join once per session.
 router.post(
   '/:sessionId',
+  rateLimit(10, 60_000),
   zValidator('json', z.object({ name: z.string().trim().min(1).max(60).optional() }).optional()),
   async (c) => {
     const { sessionId } = c.req.param();

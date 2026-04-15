@@ -40,14 +40,25 @@ const { injectWebSocket, upgradeWebSocket } = createNodeWebSocket({ app });
 
 // CORS: in dev the web runs on a different port (5173) and needs CORS. In
 // prod the API serves the built web from the same origin, so CORS isn't
-// needed — but leaving it permissive for same-origin is a no-op and avoids
-// surprises if someone later fronts the API with a different hostname.
+// actually required for normal traffic — same-origin requests carry no
+// Origin header and are unaffected by any cors() config.
+//
+// If ALLOWED_ORIGINS is set in prod (comma-separated), we honour it. Otherwise
+// we return `null` from the origin function, which means: no Access-Control-
+// Allow-Origin header is set, so any cross-origin request is rejected by the
+// browser. That's the safe default — reflecting an arbitrary origin while
+// also sending `credentials: true` is a known CORS-misconfig footgun that
+// lets malicious sites forward user cookies if any are ever introduced.
 const isProd = process.env.NODE_ENV === 'production';
+const allowedOriginsEnv = process.env.ALLOWED_ORIGINS;
+const prodAllowlist = allowedOriginsEnv
+  ? allowedOriginsEnv.split(',').map((s) => s.trim()).filter(Boolean)
+  : [];
 app.use(
   '*',
   cors({
     origin: isProd
-      ? (origin) => origin // reflect any origin in prod (same-origin requests have no Origin header and are unaffected)
+      ? (origin) => (prodAllowlist.includes(origin) ? origin : null)
       : ['http://localhost:5173', 'http://127.0.0.1:5173'],
     credentials: true,
   }),
