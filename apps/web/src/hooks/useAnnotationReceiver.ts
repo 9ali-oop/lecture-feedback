@@ -36,7 +36,15 @@ export interface IncomingStroke {
 
 const EMPTY_ANNOTATIONS: StoredAnnotation[] = [];
 
-export function useAnnotationReceiver(socket: SessionSocket | null) {
+export interface AnnotationReceiverOptions {
+  /** When true, incoming draw/erase/clear messages are ignored. Used to
+   *  suppress lecturer strokes on the student slide view while the lecturer
+   *  is drawing on the whiteboard — otherwise the strokes would paint onto
+   *  the slide the student is still looking at. */
+  suppress?: boolean;
+}
+
+export function useAnnotationReceiver(socket: SessionSocket | null, options?: AnnotationReceiverOptions) {
   const annotationsRef = useRef<Map<number, StoredAnnotation[]>>(new Map());
   const [laserState, setLaserState] = useState<LaserState>({ visible: false, x: 0, y: 0, paused: false, slideIndex: -1 });
   const [cursorState, setCursorState] = useState<CursorState>({ visible: false, x: 0, y: 0, tool: 'pointer' });
@@ -48,12 +56,21 @@ export function useAnnotationReceiver(socket: SessionSocket | null) {
     return annotationsRef.current.get(slideIndex) ?? EMPTY_ANNOTATIONS;
   }, []);
 
+  // Ref-mirrored so the message handler reads the latest value without
+  // re-subscribing the socket every time `suppress` flips.
+  const suppressRef = useRef(options?.suppress ?? false);
+  useEffect(() => { suppressRef.current = options?.suppress ?? false; }, [options?.suppress]);
+
   useEffect(() => {
     if (!socket) return;
 
     const unsub = socket.onMessage((msg: WsServerMessage) => {
       switch (msg.type) {
         case 'DRAW_STROKE': {
+          // If the stroke is tagged as a whiteboard stroke and we're
+          // suppressing (student chose to stay on slide view while lecturer
+          // is on whiteboard), ignore it — don't persist, don't render.
+          if (msg.whiteboard && suppressRef.current) break;
           const existing = annotationsRef.current.get(msg.slideIndex) ?? [];
           existing.push({
             type: 'draw',
@@ -68,6 +85,7 @@ export function useAnnotationReceiver(socket: SessionSocket | null) {
         }
 
         case 'ERASE_STROKE': {
+          if (msg.whiteboard && suppressRef.current) break;
           const existing = annotationsRef.current.get(msg.slideIndex) ?? [];
           existing.push({
             type: 'erase',

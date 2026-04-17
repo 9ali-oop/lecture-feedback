@@ -1,55 +1,12 @@
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext.tsx';
-import { useTheme } from '../contexts/ThemeContext.tsx';
-import { useViewMode } from '../contexts/ViewModeContext.tsx';
 import { roleHome } from '../lib/roles.ts';
+import AccessibilityToggles from './AccessibilityToggles.tsx';
 
 interface LayoutProps {
   children: React.ReactNode;
   title?: string;
   back?: string;
-}
-
-function ViewModeToggle() {
-  const { mode, toggle } = useViewMode();
-  return (
-    <button
-      onClick={toggle}
-      className="rounded-lg p-1.5 text-gray-400 transition hover:bg-gray-100 hover:text-gray-600 dark:text-gray-400 dark:hover:bg-gray-800 dark:hover:text-gray-300"
-      title={`Switch to ${mode === 'desktop' ? 'phone' : 'desktop'} view`}
-    >
-      {mode === 'desktop' ? (
-        <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-          <path strokeLinecap="round" strokeLinejoin="round" d="M12 18h.01M8 21h8a2 2 0 002-2V5a2 2 0 00-2-2H8a2 2 0 00-2 2v14a2 2 0 002 2z" />
-        </svg>
-      ) : (
-        <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-          <path strokeLinecap="round" strokeLinejoin="round" d="M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" />
-        </svg>
-      )}
-    </button>
-  );
-}
-
-function ThemeToggle() {
-  const { resolved, toggle } = useTheme();
-  return (
-    <button
-      onClick={toggle}
-      className="rounded-lg p-1.5 text-gray-400 transition hover:bg-gray-100 hover:text-gray-600 dark:text-gray-400 dark:hover:bg-gray-800 dark:hover:text-gray-300"
-      title={`Switch to ${resolved === 'dark' ? 'light' : 'dark'} mode`}
-    >
-      {resolved === 'dark' ? (
-        <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-          <path strokeLinecap="round" strokeLinejoin="round" d="M12 3v1m0 16v1m9-9h-1M4 12H3m15.364 6.364l-.707-.707M6.343 6.343l-.707-.707m12.728 0l-.707.707M6.343 17.657l-.707.707M16 12a4 4 0 11-8 0 4 4 0 018 0z" />
-        </svg>
-      ) : (
-        <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-          <path strokeLinecap="round" strokeLinejoin="round" d="M20.354 15.354A9 9 0 018.646 3.646 9.003 9.003 0 0012 21a9.003 9.003 0 008.354-5.646z" />
-        </svg>
-      )}
-    </button>
-  );
 }
 
 export default function Layout({ children, title, back }: LayoutProps) {
@@ -74,6 +31,7 @@ export default function Layout({ children, title, back }: LayoutProps) {
 
   return (
     <div className={`min-h-screen bg-gray-50 dark:bg-gray-950 transition-colors${impersonating ? ' pt-10' : ''}`}>
+      <a href="#main-content" className="skip-link">Skip to main content</a>
       <header className="border-b border-gray-100/80 dark:border-gray-800/80 bg-white/80 dark:bg-gray-900/80 backdrop-blur-sm sticky top-0 z-30">
         <div className="mx-auto flex max-w-5xl items-center justify-between px-4 py-3">
           <div className="flex items-center gap-3">
@@ -103,11 +61,10 @@ export default function Layout({ children, title, back }: LayoutProps) {
           </div>
 
           <div className="flex items-center gap-2 sm:gap-3">
-            <ViewModeToggle />
-            <ThemeToggle />
+            <AccessibilityToggles variant="header" />
             <div className="text-right hidden sm:block">
               <div className="text-sm font-medium text-gray-700 dark:text-gray-300">{user?.name}</div>
-              <div className="text-[10px] text-gray-400 dark:text-gray-400">{roleLabel}</div>
+              <div className="text-[10px] text-gray-500 dark:text-gray-400">{roleLabel}</div>
             </div>
             <button
               onClick={handleLogout}
@@ -119,7 +76,7 @@ export default function Layout({ children, title, back }: LayoutProps) {
         </div>
       </header>
 
-      <main className="mx-auto max-w-5xl px-3 sm:px-4 py-6 sm:py-8">{children}</main>
+      <main id="main-content" className="mx-auto max-w-5xl px-3 sm:px-4 py-6 sm:py-8">{children}</main>
     </div>
   );
 }

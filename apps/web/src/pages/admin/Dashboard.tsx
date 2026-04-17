@@ -77,7 +77,7 @@ export default function AdminDashboard() {
       <div className="mb-8 flex items-center justify-between">
         <div>
           <h1 className="text-2xl font-bold tracking-tight text-gray-900 dark:text-gray-100">Users</h1>
-          <p className="mt-1 text-sm text-gray-400 dark:text-gray-400">{users.length} accounts</p>
+          <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">{users.length} accounts</p>
         </div>
         <button
           onClick={() => { setShowForm(true); setProvisioned(null); }}
@@ -100,7 +100,7 @@ export default function AdminDashboard() {
               <div className="mb-4 flex justify-center rounded-xl bg-gray-50 dark:bg-gray-800 p-4">
                 <img src={provisioned.qrCodeDataUrl} alt="TOTP QR code" className="h-48 w-48" />
               </div>
-              <p className="mb-4 text-center text-xs text-gray-400 dark:text-gray-400">
+              <p className="mb-4 text-center text-xs text-gray-500 dark:text-gray-400">
                 Manual key: <code className="font-mono">{provisioned.totpSecret}</code>
               </p>
               <button
@@ -212,7 +212,7 @@ export default function AdminDashboard() {
       ) : (
         <div className="rounded-2xl bg-white dark:bg-gray-900 shadow-sm ring-1 ring-gray-100 dark:ring-gray-800 overflow-x-auto">
           {users.length === 0 ? (
-            <p className="p-8 text-center text-sm text-gray-400 dark:text-gray-400">No users yet.</p>
+            <p className="p-8 text-center text-sm text-gray-500 dark:text-gray-400">No users yet.</p>
           ) : (
             <table className="w-full text-sm min-w-[540px]">
               <thead>

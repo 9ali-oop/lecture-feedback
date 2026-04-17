@@ -1,3 +1,5 @@
+@import url('https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:ital,wght@0,400;0,700;1,400;1,700&display=swap');
+
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
@@ -13,6 +15,83 @@ html {
 
 html.dark {
   color-scheme: dark;
+}
+
+/* Dyslexia-friendly reading mode. Swaps to Atkinson Hyperlegible (Braille
+   Institute, 2020) and applies the British Dyslexia Association style guide:
+   generous line-height, looser letter spacing, left-aligned text (never
+   justified), and a slightly heavier default weight for better stroke
+   contrast. Scoped to the body font — does not touch emoji, icons, or the
+   PDF canvas so the slide view stays pixel-accurate. */
+html.dyslexia,
+html.dyslexia * {
+  font-family: 'Atkinson Hyperlegible', 'Inter', system-ui, sans-serif;
+  letter-spacing: 0.02em;
+}
+html.dyslexia body {
+  line-height: 1.6;
+}
+html.dyslexia p,
+html.dyslexia li,
+html.dyslexia label,
+html.dyslexia textarea,
+html.dyslexia input {
+  line-height: 1.55;
+}
+/* Prevent text-justify on prose passages (BDA guidance: never justify body
+   text for readers with dyslexia — uneven word spacing is disorienting).
+   We don't force text-align on paragraphs because most copy in this app
+   is short labels inside centred cards; overriding that breaks layouts
+   without benefit. The rule kicks in only where the author explicitly
+   asked for justified text. */
+html.dyslexia p[style*="justify"],
+html.dyslexia li[style*="justify"],
+html.dyslexia .prose p,
+html.dyslexia .prose li {
+  text-align: left;
+}
+html.dyslexia .prose p,
+html.dyslexia .prose li {
+  max-width: 72ch;
+}
+
+/* Respect users who've requested reduced motion. We keep transform-based
+   hover/tap cues (they are quick, opt-in on interaction) but drop the long
+   colour/opacity fades the UI uses for theme and panel transitions. */
+@media (prefers-reduced-motion: reduce) {
+  html {
+    transition: none;
+  }
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+/* Skip-to-main-content link — visually hidden until a keyboard user tabs
+   onto it. WAI pattern: the link is the first focusable element in the DOM
+   so a single Tab press surfaces it. Clicking/activating jumps focus past
+   the page header straight to the main content region. */
+.skip-link {
+  position: absolute;
+  top: 0;
+  left: 0;
+  transform: translateY(-120%);
+  padding: 0.5rem 0.875rem;
+  background: #1d4ed8;
+  color: #fff;
+  font-weight: 600;
+  border-radius: 0 0 0.5rem 0;
+  z-index: 100;
+  transition: transform 0.15s ease-out;
+}
+.skip-link:focus,
+.skip-link:focus-visible {
+  transform: translateY(0);
+  outline: 2px solid #fff;
+  outline-offset: 2px;
 }
 
 .slide-canvas canvas {

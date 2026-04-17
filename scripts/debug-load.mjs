@@ -1,0 +1,12 @@
+import { chromium } from 'playwright';
+const browser = await chromium.launch({ headless: true });
+const ctx = await browser.newContext();
+const page = await ctx.newPage();
+page.on('console', (m) => console.log(`[${m.type()}] ${m.text()}`));
+page.on('pageerror', (e) => console.log(`[pageerror] ${e.message}\n${e.stack}`));
+await page.goto('http://localhost:5173/join/deadbeef-dead-dead-dead-deaddeaddead').catch(() => {});
+await page.waitForTimeout(3000);
+const html = await page.content();
+console.log('--- HTML (first 1500 chars) ---');
+console.log(html.slice(0, 1500));
+await browser.close();

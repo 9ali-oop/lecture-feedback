@@ -7,11 +7,16 @@ interface Props {
   dark?: boolean;
 }
 
+// Okabe-Ito palette — the de-facto colour-blind-safe palette (Okabe & Ito,
+// 2008). Every pair of these hues is distinguishable under deuteranopia,
+// protanopia, and tritanopia, so the chart conveys meaning without relying
+// on colour perception alone. We also render the percentage label inside
+// each slice as a belt-and-braces fallback.
 const COLORS = {
-  got_it: '#16a34a',
-  neutral: '#2563eb',
-  confused: '#ca8a04',
-  lost: '#dc2626',
+  got_it: '#009E73', // bluish-green (success)
+  neutral: '#0072B2', // blue (neutral)
+  confused: '#E69F00', // orange (attention)
+  lost: '#D55E00', // vermillion (distinct from orange for protanopia/deuteranopia)
 };
 
 const LABELS = {
@@ -50,6 +55,24 @@ export default function FeedbackPieChart({ distribution, emptyLabel, dark }: Pro
             outerRadius={80}
             paddingAngle={2}
             dataKey="value"
+            // Render the percentage inside each slice. Redundant with the
+            // colour legend, but critical for colour-blind users and for
+            // screenshots printed in greyscale — meaning is no longer
+            // carried by hue alone.
+            label={({ value, cx, cy, midAngle, innerRadius, outerRadius }) => {
+              const RAD = Math.PI / 180;
+              const r = innerRadius + (outerRadius - innerRadius) * 0.5;
+              const x = cx + r * Math.cos(-midAngle * RAD);
+              const y = cy + r * Math.sin(-midAngle * RAD);
+              const pct = Math.round((value / distribution.total) * 100);
+              if (pct < 8) return null; // too small to render legibly
+              return (
+                <text x={x} y={y} fill="#fff" textAnchor="middle" dominantBaseline="central" fontSize="11" fontWeight="600">
+                  {pct}%
+                </text>
+              );
+            }}
+            labelLine={false}
           >
             {data.map((entry) => (
               <Cell key={entry.key} fill={COLORS[entry.key as keyof typeof COLORS]} />

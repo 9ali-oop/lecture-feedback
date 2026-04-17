@@ -1,7 +1,7 @@
 import { Hono } from 'hono';
 import { zValidator } from '@hono/zod-validator';
 import { z } from 'zod';
-import { eq, and, count, countDistinct } from 'drizzle-orm';
+import { eq, and, count, countDistinct, sql } from 'drizzle-orm';
 import { db } from '../db/index.js';
 import { sessions, modules, moduleEnrollments, feedbackEvents, sessionParticipants, slideTimings, questions, users, slideWhiteboards, slideAnnotations, slideNotes, confusionContexts, questionUpvotes, polls, pollResponses, paceFeedback, reflections, studentProfiles } from '../db/schema.js';
 import { requireAuth } from '../middleware/auth.js';
@@ -684,6 +684,25 @@ router.get('/:id/report', async (c) => {
 
   overallDist.total = overallDist.got_it + overallDist.neutral + overallDist.confused + overallDist.lost;
 
+  // ── Per-student "your vote" (student role only) ─────────────────────
+  // ONLY attach yourVote to slides the student explicitly voted on. We do
+  // NOT carry-forward, because the class distribution doesn't either —
+  // "your answer 😕" on a slide labelled "No feedback recorded" would
+  // contradict itself. Within a slide, pick the student's latest emoji
+  // (in case they switched mid-slide).
+  if (role === 'student') {
+    const myEvents = events
+      .filter((e) => e.studentId === sub)
+      .sort((a, b) => a.selectedAt.getTime() - b.selectedAt.getTime());
+    const perSlide = new Map<number, typeof events[number]['emoji']>();
+    for (const ev of myEvents) perSlide.set(ev.slideIndex, ev.emoji); // last write wins
+    for (const slide of slides) {
+      if (perSlide.has(slide.slideIndex)) {
+        (slide as any).yourVote = perSlide.get(slide.slideIndex);
+      }
+    }
+  }
+
   // ── Engagement analytics ────────────────────────────────────────────
   const { computeSlideEngagement, computeSessionEngagement, computeSignalComparisons, segmentByProficiency, computeEmojiScore, computeConfusionScore, computeNoteScore, computeEngagementScore: computeEng } = await import('../lib/engagement.js');
 
@@ -782,6 +801,62 @@ router.get('/:id/report', async (c) => {
       proficiencyBreakdown,
     } : undefined;
 
+  // ── Learning dynamics (lecturer-only Markov analysis) ───────────────────
+  // Build trajectories from feedback_events, estimate the transition matrix,
+  // and derive expected-recovery times + per-student risk. Only included in
+  // the response for lecturer/admin — student view is unaffected.
+  let learningDynamics: import('@lecture-feedback/shared').LearningDynamicsBlock | undefined;
+  if ((role === 'lecturer' || role === 'admin') && session.totalSlides > 0 && events.length > 0) {
+    const { computeLearningDynamics } = await import('../lib/markov.js');
+
+    // Map studentId → name for the trajectories. We already have the feedback
+    // events + the enrolled set from earlier in this handler; do a small join.
+    const studentIds = Array.from(new Set(events.map((e) => e.studentId)));
+    const nameRows = studentIds.length > 0
+      ? await db.select({ id: users.id, name: users.name }).from(users).where(sql`${users.id} = ANY(${sql`ARRAY[${sql.join(studentIds.map(id => sql`${id}::uuid`), sql`, `)}]`})`)
+      : [];
+    const studentNames = new Map(nameRows.map((r) => [r.id, r.name]));
+
+    const ld = computeLearningDynamics({
+      samples: events.map((e) => ({
+        studentId: e.studentId,
+        slideIndex: e.slideIndex,
+        emoji: e.emoji,
+        selectedAt: e.selectedAt,
+      })),
+      totalSlides: session.totalSlides,
+      studentNames,
+    });
+
+    learningDynamics = {
+      transitionMatrix: ld.transitionMatrix,
+      transitionCounts: ld.transitionCounts,
+      expectedRecovery: ld.expectedRecovery,
+      recoveryNote: ld.recoveryNote,
+      sampleSize: ld.sampleSize,
+      activeStudents: ld.activeStudents,
+      students: ld.students.map((s) => ({
+        studentId: s.studentId,
+        studentName: s.studentName,
+        sequence: s.sequence,
+        distribution: s.distribution,
+        entropy: s.entropy,
+        endingState: s.endingState,
+        tailNonMasteryLength: s.tailNonMasteryLength,
+        riskScore: s.riskScore,
+        recovered: s.recovered,
+      })),
+      atRisk: ld.atRisk.map((s) => ({
+        studentId: s.studentId,
+        studentName: s.studentName,
+        sequence: s.sequence,
+        endingState: s.endingState,
+        riskScore: s.riskScore,
+        recovered: s.recovered,
+      })),
+    };
+  }
+
   return c.json({
     session: {
       id: session.id,
@@ -803,6 +878,7 @@ router.get('/:id/report', async (c) => {
     slides,
     overallDistribution: overallDist,
     engagement,
+    learningDynamics,
   });
 });
 

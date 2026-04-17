@@ -8,6 +8,8 @@ import PdfViewer from '../../components/PdfViewer.tsx';
 import AnnotationOverlay from '../../components/AnnotationOverlay.tsx';
 import StudentAnnotationOverlay from '../../components/StudentAnnotationOverlay.tsx';
 import RequestPenModal from '../../components/RequestPenModal.tsx';
+import AccessibilityToggles from '../../components/AccessibilityToggles.tsx';
+import { useLiveAnnouncer } from '../../components/LiveRegion.tsx';
 import { useAnnotationReceiver } from '../../hooks/useAnnotationReceiver.ts';
 import { useAnnotationAccess } from '../../hooks/useAnnotationAccess.ts';
 import { useAnnotationSync } from '../../hooks/useAnnotationSync.ts';
@@ -53,6 +55,7 @@ export default function StudentSession() {
   const { sessionId } = useParams<{ sessionId: string }>();
   const navigate = useNavigate();
   const { user } = useAuth();
+  const { announce } = useLiveAnnouncer();
   const token = localStorage.getItem('token')!;
 
   const [session, setSession] = useState<Session | null>(null);
@@ -79,7 +82,6 @@ export default function StudentSession() {
   const [question, setQuestion] = useState('');
   const [questionSent, setQuestionSent] = useState(false);
   const [questionError, setQuestionError] = useState('');
-  const [showQA, setShowQA] = useState(false); // desktop-only toggle
   // Only auto-open the side panel on true desktop widths (lg breakpoint).
   // Below this the strip handles primary input and the panel opens on demand
   // via the tab bar — otherwise landscape phones (~900px) would start with
@@ -88,6 +90,10 @@ export default function StudentSession() {
   const [focusMode, setFocusMode] = useState(false);
   // Bottom-tab selection on mobile: feedback | qa | notes
   const [activeTab, setActiveTab] = useState<'feedback' | 'qa' | 'notes'>('feedback');
+  // Desktop stacks Feedback + Notes + Q&A in one sidebar. Q&A collapses so
+  // Notes gets the flex-1 vertical real estate by default — asking a question
+  // is deliberate, and auto-expands on focus.
+  const [qaExpanded, setQaExpanded] = useState(false);
   const [myQuestions, setMyQuestions] = useState<{ id: string; content: string; answered: boolean }[]>([]);
 
   const [ended, setEnded] = useState(false);
@@ -193,13 +199,19 @@ export default function StudentSession() {
     });
   }, [sessionId]);
 
-  // Sync current note with slide
+  // Reset transient per-slide state on slide change only — keeping `notes` out
+  // of the deps list because each keystroke updates the map and would otherwise
+  // clear the emoji selection mid-typing.
   useEffect(() => {
-    setNote(notes.get(currentSlide) ?? '');
     setSelectedEmoji(null);
     currentSlideRef.current = currentSlide;
-    // Load cached text boxes for the new slide (clear if none)
     setLecturerTextBoxes(textBoxCacheRef.current.get(currentSlide) ?? []);
+  }, [currentSlide]);
+
+  // Reload the note textarea when the slide changes or the notes map finishes
+  // loading. Re-running on keystrokes is a harmless no-op (value stays equal).
+  useEffect(() => {
+    setNote(notes.get(currentSlide) ?? '');
   }, [currentSlide, notes]);
 
   // WebSocket
@@ -214,6 +226,9 @@ export default function StudentSession() {
         setLecturerSlide(msg.slideIndex);
         if (syncedRef.current) {
           setCurrentSlide(msg.slideIndex);
+          // Announce slide change to screen-reader users — sighted users see
+          // the canvas swap, but a blind user would otherwise have no signal.
+          announce(`Slide ${msg.slideIndex + 1} of ${msg.totalSlides}`);
         }
         // Reset emoji on slide change
         setSelectedEmoji(null);
@@ -222,20 +237,29 @@ export default function StudentSession() {
         setActivePoll(msg.poll);
         setPollAnswer(null);
         setPollResults(null);
+        announce('A poll has been launched', 'assertive');
       }
       if (msg.type === 'POLL_CLOSED') {
         setPollResults(msg.results);
         setActivePoll((p) => p?.id === msg.pollId ? { ...p, status: 'closed' } : p);
+        announce('Poll closed. Results available.');
       }
       if (msg.type === 'QUESTION_ANSWERED') {
         setMyQuestions((prev) => prev.map((q) => q.id === msg.questionId ? { ...q, answered: true } : q));
+        announce('Your question has been answered.');
       }
       if (msg.type === 'QUESTION_UPVOTED') {
         setQuestionUpvoteCounts((prev) => new Map(prev).set(msg.questionId, msg.upvoteCount));
       }
       if (msg.type === 'SESSION_ENDED') setEnded(true);
-      if (msg.type === 'LECTURER_DISCONNECTED') setLecturerDisconnected(true);
-      if (msg.type === 'LECTURER_RECONNECTED') setLecturerDisconnected(false);
+      if (msg.type === 'LECTURER_DISCONNECTED') {
+        setLecturerDisconnected(true);
+        announce('Lecturer disconnected. Waiting for reconnection.', 'assertive');
+      }
+      if (msg.type === 'LECTURER_RECONNECTED') {
+        setLecturerDisconnected(false);
+        announce('Lecturer reconnected.');
+      }
       if (msg.type === 'WHITEBOARD_TOGGLE') {
         setLecturerWhiteboard(msg.enabled);
         setViewMode(msg.enabled ? 'whiteboard' : 'slide');
@@ -258,7 +282,14 @@ export default function StudentSession() {
     };
   }, [sessionId, token]);
 
-  const annotationReceiver = useAnnotationReceiver(socketReady ? socketRef.current : null);
+  // Suppress lecturer strokes when they're drawing on the whiteboard AND
+  // the student chose to stay on the slide view — otherwise those whiteboard
+  // scribbles would appear on top of the slide the student is reading.
+  const suppressLecturerStrokes = lecturerWhiteboard && viewMode === 'slide';
+  const annotationReceiver = useAnnotationReceiver(
+    socketReady ? socketRef.current : null,
+    { suppress: suppressLecturerStrokes },
+  );
   const annotationAccess = useAnnotationAccess(socketReady ? socketRef.current : null);
   const studentAnnotationReceiver = useStudentAnnotationReceiver(socketReady ? socketRef.current : null);
 
@@ -315,6 +346,9 @@ export default function StudentSession() {
     setConfusionText('');
     setConfusionHighlights([]);
     setConfusionSent(false);
+    // Announce selection for screen-reader parity with the visual flash + haptic.
+    const labels: Record<Emoji, string> = { got_it: 'Got it', neutral: 'Neutral', confused: 'Confused', lost: 'Lost' };
+    announce(`Feedback sent: ${labels[emoji]}`);
     // Eyes-off confirmation: short haptic pulse so students know the tap
     // registered without having to look back at the phone. Vibrate API is a
     // no-op on iOS Safari and desktop — acceptable fallback (visual flash below).
@@ -331,6 +365,8 @@ export default function StudentSession() {
   function handlePaceChange(value: PaceValue) {
     setPace(value);
     socketRef.current?.send({ type: 'PACE_FEEDBACK', value });
+    const labels: Record<PaceValue, string> = { slow: 'Too slow', ok: 'Just right', fast: 'Too fast' };
+    announce(`Pace set to ${labels[value]}`);
   }
 
   // Fullscreen: try to request document fullscreen + lock orientation to landscape.
@@ -458,6 +494,7 @@ export default function StudentSession() {
       setConfusionText('');
       setConfusionHighlights([]);
       setDrawingArea(false);
+      announce('Confusion feedback sent to lecturer.');
     } catch {
       // Silently fail - the emoji feedback was already recorded
       setConfusionSent(true);
@@ -537,9 +574,12 @@ export default function StudentSession() {
       setMyQuestions((prev) => [{ id: q.id, content: q.content, answered: false }, ...prev]);
       setQuestion('');
       setQuestionSent(true);
+      announce('Question sent to lecturer. Waiting for answer.');
       setTimeout(() => setQuestionSent(false), 3000);
     } catch (err) {
-      setQuestionError(err instanceof Error ? err.message : 'Failed to send');
+      const msg = err instanceof Error ? err.message : 'Failed to send';
+      setQuestionError(msg);
+      announce(`Could not send question: ${msg}`, 'assertive');
     }
   }
 
@@ -573,10 +613,11 @@ export default function StudentSession() {
               </p>
               <div className="mt-6 space-y-4">
                 <div>
-                  <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                  <label htmlFor="reflection-important" className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
                     What was the most important thing you learned?
                   </label>
                   <textarea
+                    id="reflection-important"
                     value={reflectionImportant}
                     onChange={(e) => setReflectionImportant(e.target.value)}
                     placeholder="The key takeaway from this session was…"
@@ -586,10 +627,11 @@ export default function StudentSession() {
                   />
                 </div>
                 <div>
-                  <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                  <label htmlFor="reflection-unclear" className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
                     What's still unclear?
                   </label>
                   <textarea
+                    id="reflection-unclear"
                     value={reflectionUnclear}
                     onChange={(e) => setReflectionUnclear(e.target.value)}
                     placeholder="I'm still not sure about…"
@@ -607,7 +649,7 @@ export default function StudentSession() {
                     Submit reflection
                   </button>
                   <button
-                    onClick={() => navigate('/student')}
+                    onClick={() => navigate(`/student/report/${sessionId}`)}
                     className="rounded-xl border border-gray-200 dark:border-gray-700 px-4 py-2.5 text-sm text-gray-600 dark:text-gray-400 transition hover:bg-gray-50 dark:hover:bg-gray-800"
                   >
                     Skip
@@ -619,10 +661,10 @@ export default function StudentSession() {
             <>
               <p className="mt-2 text-center text-sm text-green-600 dark:text-green-400">Thank you for your reflection!</p>
               <button
-                onClick={() => navigate('/student')}
+                onClick={() => navigate(`/student/report/${sessionId}`)}
                 className="mt-6 w-full rounded-xl bg-blue-600 py-2.5 text-sm font-semibold text-white shadow-sm shadow-blue-600/20 transition hover:bg-blue-700"
               >
-                Back to dashboard
+                View session report
               </button>
             </>
           )}
@@ -633,12 +675,13 @@ export default function StudentSession() {
 
   return (
     <div className="flex h-[100dvh] flex-col bg-gray-50 dark:bg-gray-950 overflow-hidden">
+      <a href="#session-main" className="skip-link">Skip to slides and feedback</a>
       {/* Top bar */}
       <div className={`${focusMode ? 'hidden' : 'flex'} shrink-0 items-center justify-between border-b border-gray-100 dark:border-gray-800 bg-white/80 dark:bg-gray-900/80 backdrop-blur-sm px-3 py-2 sticky top-0 z-30`}>
         <div className="flex items-center gap-2 min-w-0">
           <button
             onClick={() => { if (confirm('Leave this session?')) navigate('/student'); }}
-            className="shrink-0 rounded-lg px-2.5 py-2 text-xs font-medium text-red-500 transition hover:bg-red-50 dark:hover:bg-red-900/30 hover:text-red-700 min-h-[36px]"
+            className="shrink-0 rounded-lg px-2.5 py-2 text-xs font-medium text-red-600 transition hover:bg-red-50 dark:hover:bg-red-900/30 hover:text-red-700 dark:text-red-400 min-h-[36px]"
             title="Leave session"
           >
             Leave
@@ -669,9 +712,11 @@ export default function StudentSession() {
             title={focusMode ? 'Exit fullscreen' : 'Fullscreen slides'}
           >
             {focusMode ? (
-              <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M9 9V5H5m0 14h4v-4m6-6h4V5m-4 14h4v-4" /></svg>
+              // Exit-fullscreen: corners face center, arms extend to edges
+              <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M4 8H8V4 M16 4V8H20 M20 16H16V20 M8 20V16H4" /></svg>
             ) : (
-              <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M4 8V4h4M4 16v4h4M20 8V4h-4M20 16v4h-4" /></svg>
+              // Enter-fullscreen: corners at viewBox corners, arms extend inward
+              <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M4 8V4h4 M16 4h4v4 M20 16v4h-4 M8 20H4v-4" /></svg>
             )}
           </button>
           {!synced && (
@@ -710,14 +755,10 @@ export default function StudentSession() {
               Annotating
             </span>
           )}
-          <button
-            onClick={() => setShowQA((v) => !v)}
-            className={`hidden lg:inline-flex rounded-lg border px-3 py-1.5 text-xs font-medium transition ${
-              showQA ? 'border-blue-500 bg-blue-50 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300' : 'border-gray-200 dark:border-gray-700 text-gray-600 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-gray-800'
-            }`}
-          >
-            Q&amp;A
-          </button>
+          {/* Theme + Dyslexia toggles. No device-view toggle — the session
+              layout is already viewport-responsive and the simulated phone
+              frame would collide with the slide canvas. */}
+          <AccessibilityToggles variant="header" hideViewToggle />
         </div>
       </div>
 
@@ -805,7 +846,7 @@ export default function StudentSession() {
         </div>
       )}
 
-      <div className="flex flex-1 flex-col lg:flex-row overflow-hidden">
+      <div id="session-main" className="flex flex-1 flex-col lg:flex-row overflow-hidden">
         {/* Slides column. In focus mode on lg, the reaction strip is
             absolutely positioned at the bottom of the viewport (see below)
             — reserve 4rem of bottom padding so the slide doesn't render
@@ -1030,7 +1071,7 @@ export default function StudentSession() {
             return (
               <button
                 key={t}
-                onClick={() => { setActiveTab(t); setShowQA(t === 'qa'); setShowPanel(true); }}
+                onClick={() => { setActiveTab(t); setShowPanel(true); }}
                 className={`flex-1 py-3 text-sm font-semibold transition relative min-h-[48px] ${
                   isActive
                     ? 'bg-blue-50 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300 border-t-2 border-blue-500'
@@ -1061,21 +1102,27 @@ export default function StudentSession() {
             and leave the user stuck with half-visible emoji buttons. */}
         <div className={`flex shrink-0 flex-col border-t lg:border-t-0 lg:border-l border-gray-100 dark:border-gray-800 bg-white dark:bg-gray-900 overflow-hidden transition-all duration-200 ${focusMode ? 'hidden lg:flex' : ''} ${
           showPanel
-            ? 'h-[55dvh] landscape:h-[40dvh] lg:h-auto lg:w-72'
-            : 'h-0 lg:h-auto lg:w-0 lg:border-l-0'
+            ? 'h-[55dvh] landscape:h-[40dvh] lg:!h-full lg:w-72'
+            : 'h-0 lg:!h-full lg:w-0 lg:border-l-0'
         }`}>
+          {/* Mobile / tablet rendering — the existing tab-based content
+              (one panel visible at a time, chosen via the bottom tab bar).
+              Desktop uses a three-section stacked layout further below so
+              the full sidebar height isn't wasted on a single panel. */}
+          <div className="flex flex-1 flex-col overflow-hidden lg:hidden">
           {activeTab === 'qa' ? (
             /* Q&A panel */
             <div className="flex flex-1 flex-col overflow-hidden p-4">
               <div className="mb-3 flex items-center justify-between">
                 <h3 className="text-sm font-semibold text-gray-900 dark:text-gray-100">Ask a question</h3>
-                <button onClick={() => { setActiveTab('feedback'); setShowQA(false); }} className="text-xs text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 md:inline hidden">✕</button>
+                <button onClick={() => setActiveTab('feedback')} className="text-xs text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 md:inline hidden">✕</button>
               </div>
               <form onSubmit={handleQuestion} className="space-y-3">
                 <textarea
                   value={question}
                   onChange={(e) => setQuestion(e.target.value)}
                   placeholder="Type your question…"
+                  aria-label="Your question for the lecturer"
                   rows={3}
                   maxLength={500}
                   className="w-full rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 p-3 text-sm text-gray-900 dark:text-gray-100 outline-none resize-none focus:border-blue-400 focus:ring-2 focus:ring-blue-100 dark:focus:ring-blue-800"
@@ -1117,6 +1164,7 @@ export default function StudentSession() {
                 value={note}
                 onChange={(e) => handleNoteChange(e.target.value)}
                 placeholder="Your notes for this slide. Saves automatically."
+                aria-label={`Notes for slide ${currentSlide + 1}`}
                 className="flex-1 resize-none rounded-xl border border-gray-200 dark:border-gray-700 bg-gray-50/50 dark:bg-gray-800 p-3 text-base text-gray-900 dark:text-gray-100 outline-none transition focus:border-blue-400 focus:bg-white dark:focus:bg-gray-800 focus:ring-2 focus:ring-blue-100 dark:focus:ring-blue-800"
               />
             </div>
@@ -1133,17 +1181,17 @@ export default function StudentSession() {
                     <button
                       key={e.id}
                       onClick={() => handleEmojiSelect(e.id)}
-                      className={`flex flex-col items-center gap-1 rounded-xl border py-4 transition active:scale-95 ${
+                      className={`flex flex-col items-center gap-0.5 rounded-xl border py-2.5 transition active:scale-95 ${
                         selectedEmoji === e.id ? e.active : e.color
                       }`}
                     >
-                      <span className="text-3xl">{e.emoji}</span>
-                      <span className="text-xs font-medium text-gray-700 dark:text-gray-300">{e.label}</span>
+                      <span className="text-2xl">{e.emoji}</span>
+                      <span className="text-[11px] font-medium text-gray-700 dark:text-gray-300">{e.label}</span>
                     </button>
                   ))}
                 </div>
                 {!selectedEmoji && (
-                  <p className="mt-2 text-center text-xs text-gray-400 dark:text-gray-400">
+                  <p className="mt-2 text-center text-xs text-gray-500 dark:text-gray-400">
                     Select your understanding for this slide
                   </p>
                 )}
@@ -1190,6 +1238,7 @@ export default function StudentSession() {
 
                   <textarea value={confusionText} onChange={(e) => setConfusionText(e.target.value)}
                     placeholder="e.g. I don't understand the formula..." maxLength={500} rows={3}
+                    aria-label="Describe what is confusing about this slide"
                     className="w-full resize-none rounded-xl border border-yellow-200 dark:border-yellow-700 bg-white dark:bg-gray-800 px-3 py-3 text-sm text-gray-900 dark:text-gray-100 outline-none focus:border-yellow-400 focus:ring-2 focus:ring-yellow-100 dark:focus:ring-yellow-900/40" />
 
                   <button onClick={handleConfusionSubmit}
@@ -1205,7 +1254,7 @@ export default function StudentSession() {
 
               {/* Pace indicator */}
               <div>
-                <h3 className="mb-2 text-[11px] font-semibold text-gray-400 dark:text-gray-400 uppercase tracking-widest">Pace</h3>
+                <h3 className="mb-2 text-[11px] font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-widest">Pace</h3>
                 <div className="flex rounded-xl border border-gray-200 dark:border-gray-700 overflow-hidden">
                   {([
                     { value: 'slow' as PaceValue, label: 'Too slow', icon: '🐢' },
@@ -1227,6 +1276,175 @@ export default function StudentSession() {
 
             </div>
           )}
+          </div>
+
+          {/* Desktop stacked sidebar — Feedback on top (shrink-0), Notes in
+              the middle (flex-1 so the textarea fills the bulk of the sidebar),
+              Q&A at the bottom as a collapsible drawer. Avoids tab-switching
+              for the two most frequent interactions (reacting + taking notes). */}
+          <div className="hidden lg:flex flex-1 flex-col overflow-hidden min-h-0">
+            {/* Feedback — always visible for one-tap reactions */}
+            <div className="shrink-0 border-b border-gray-100 dark:border-gray-800 p-4 space-y-3">
+              <div>
+                <h3 className="mb-2 text-sm font-semibold text-gray-900 dark:text-gray-100">How are you doing?</h3>
+                <div className="grid grid-cols-2 gap-2">
+                  {EMOJIS.map((e) => (
+                    <button
+                      key={e.id}
+                      onClick={() => handleEmojiSelect(e.id)}
+                      className={`flex flex-col items-center gap-0.5 rounded-xl border py-2.5 transition active:scale-95 ${
+                        selectedEmoji === e.id ? e.active : e.color
+                      }`}
+                    >
+                      <span className="text-2xl">{e.emoji}</span>
+                      <span className="text-[11px] font-medium text-gray-700 dark:text-gray-300">{e.label}</span>
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {isConfused && !confusionSent && (
+                <div className="rounded-xl border border-yellow-200 dark:border-yellow-700 bg-yellow-50 dark:bg-yellow-900/20 p-3 space-y-3">
+                  <p className="text-xs font-medium text-yellow-800 dark:text-yellow-300">
+                    What's confusing? <span className="font-normal text-yellow-600 dark:text-yellow-400">(optional)</span>
+                  </p>
+                  {drawingArea && (
+                    <div className="flex items-center gap-2">
+                      <span className="text-[11px] font-medium text-yellow-700 dark:text-yellow-400">Shape:</span>
+                      <button onClick={() => setConfusionShape('rect')}
+                        className={`rounded-lg px-2.5 py-1 text-sm font-medium ${confusionShape === 'rect' ? 'bg-red-500 text-white' : 'bg-white dark:bg-gray-800 text-gray-500 ring-1 ring-gray-200 dark:ring-gray-700'}`}>▭</button>
+                      <button onClick={() => setConfusionShape('circle')}
+                        className={`rounded-lg px-2.5 py-1 text-sm font-medium ${confusionShape === 'circle' ? 'bg-red-500 text-white' : 'bg-white dark:bg-gray-800 text-gray-500 ring-1 ring-gray-200 dark:ring-gray-700'}`}>○</button>
+                      {confusionHighlights.length > 0 && (
+                        <button onClick={() => setConfusionHighlights([])} className="ml-auto text-xs text-gray-500 hover:text-gray-700 px-2">Clear</button>
+                      )}
+                    </div>
+                  )}
+                  <button
+                    onClick={() => {
+                      const next = !drawingArea;
+                      setDrawingArea(next);
+                      if (next) setShowPanel(false);
+                    }}
+                    className={`w-full rounded-xl border-2 py-2 text-xs font-semibold transition ${
+                      drawingArea
+                        ? 'border-red-400 bg-red-50 dark:bg-red-900/30 text-red-700 dark:text-red-300'
+                        : 'border-dashed border-yellow-400 bg-white dark:bg-yellow-900/10 text-yellow-800 dark:text-yellow-300 hover:bg-yellow-50 dark:hover:bg-yellow-900/20'
+                    }`}
+                  >
+                    {drawingArea
+                      ? (confusionHighlights.length > 0 ? 'Marked — drag again to change' : 'Drag on the slide to mark')
+                      : 'Mark a confusing area on the slide'}
+                  </button>
+                  <textarea value={confusionText} onChange={(e) => setConfusionText(e.target.value)}
+                    placeholder="e.g. I don't understand the formula..." maxLength={500} rows={2}
+                    className="w-full resize-none rounded-xl border border-yellow-200 dark:border-yellow-700 bg-white dark:bg-gray-800 px-3 py-2 text-xs text-gray-900 dark:text-gray-100 outline-none focus:border-yellow-400 focus:ring-2 focus:ring-yellow-100 dark:focus:ring-yellow-900/40" />
+                  <button onClick={handleConfusionSubmit}
+                    disabled={!confusionText.trim() && confusionHighlights.length === 0}
+                    className="w-full rounded-xl bg-yellow-600 py-2 text-xs font-semibold text-white transition hover:bg-yellow-700 disabled:opacity-40">
+                    Send feedback
+                  </button>
+                </div>
+              )}
+              {isConfused && confusionSent && (
+                <p className="text-center text-xs text-green-600">Feedback sent ✓</p>
+              )}
+
+              <div>
+                <h3 className="mb-1.5 text-[11px] font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-widest">Pace</h3>
+                <div className="flex rounded-xl border border-gray-200 dark:border-gray-700 overflow-hidden">
+                  {([
+                    { value: 'slow' as PaceValue, label: 'Too slow', icon: '🐢' },
+                    { value: 'ok' as PaceValue, label: 'Just right', icon: '👌' },
+                    { value: 'fast' as PaceValue, label: 'Too fast', icon: '🏃' },
+                  ]).map((p) => (
+                    <button key={p.value} onClick={() => handlePaceChange(p.value)}
+                      className={`flex-1 py-2 text-center text-[11px] transition ${
+                        pace === p.value
+                          ? 'bg-blue-600 text-white font-semibold'
+                          : 'text-gray-500 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-gray-800'
+                      }`}>
+                      <span className="block text-sm">{p.icon}</span>
+                      <span className="block mt-0.5">{p.label}</span>
+                    </button>
+                  ))}
+                </div>
+              </div>
+            </div>
+
+            {/* Notes — flex-1 so the textarea owns the bulk of the sidebar */}
+            <div className="flex flex-1 flex-col overflow-hidden min-h-0 p-4">
+              <div className="mb-2 flex items-center justify-between">
+                <h3 className="text-sm font-semibold text-gray-900 dark:text-gray-100">Notes — slide {currentSlide + 1}</h3>
+                {noteSaving && <span className="text-xs text-gray-400">Saving…</span>}
+              </div>
+              <textarea
+                value={note}
+                onChange={(e) => handleNoteChange(e.target.value)}
+                placeholder="Your notes for this slide. Saves automatically."
+                className="flex-1 resize-none rounded-xl border border-gray-200 dark:border-gray-700 bg-gray-50/50 dark:bg-gray-800 p-3 text-sm text-gray-900 dark:text-gray-100 outline-none transition focus:border-blue-400 focus:bg-white dark:focus:bg-gray-800 focus:ring-2 focus:ring-blue-100 dark:focus:ring-blue-800"
+              />
+            </div>
+
+            {/* Q&A — collapsible footer. Collapsed by default so Notes owns
+                the real estate; expands to ~45% max when asking. */}
+            <div className={`shrink-0 border-t border-gray-100 dark:border-gray-800 ${qaExpanded ? 'flex flex-col min-h-0 max-h-[45%]' : ''}`}>
+              <button
+                onClick={() => setQaExpanded((v) => !v)}
+                className="w-full flex items-center justify-between px-4 py-3 text-sm font-semibold text-gray-900 dark:text-gray-100 hover:bg-gray-50 dark:hover:bg-gray-800 transition"
+              >
+                <span className="flex items-center gap-2">
+                  <span>Q&amp;A</span>
+                  {myQuestions.some((q) => !q.answered) && (
+                    <span className="h-2 w-2 rounded-full bg-blue-500" />
+                  )}
+                  {myQuestions.length > 0 && (
+                    <span className="text-xs font-normal text-gray-500 dark:text-gray-400">{myQuestions.length}</span>
+                  )}
+                </span>
+                <svg className={`h-4 w-4 text-gray-400 transition-transform ${qaExpanded ? 'rotate-180' : ''}`} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
+                </svg>
+              </button>
+              {qaExpanded && (
+                <div className="flex-1 overflow-y-auto px-4 pb-4 space-y-3">
+                  <form onSubmit={handleQuestion} className="space-y-2">
+                    <textarea
+                      value={question}
+                      onChange={(e) => setQuestion(e.target.value)}
+                      placeholder="Type your question…"
+                      aria-label="Your question for the lecturer"
+                      rows={2}
+                      maxLength={500}
+                      className="w-full rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 p-2.5 text-sm text-gray-900 dark:text-gray-100 outline-none resize-none focus:border-blue-400 focus:ring-2 focus:ring-blue-100 dark:focus:ring-blue-800"
+                    />
+                    {questionError && <p className="text-xs text-red-500">{questionError}</p>}
+                    {questionSent && <p className="text-xs text-green-600">Question sent ✓</p>}
+                    <button
+                      type="submit"
+                      disabled={!question.trim()}
+                      className="w-full rounded-lg bg-blue-600 py-2 text-sm font-semibold text-white transition hover:bg-blue-700 disabled:opacity-40"
+                    >
+                      Send question
+                    </button>
+                  </form>
+                  {myQuestions.length > 0 && (
+                    <div className="space-y-2">
+                      <h4 className="text-[10px] font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider">My questions</h4>
+                      {myQuestions.map((q) => (
+                        <div key={q.id} className={`rounded-lg border p-2 text-xs ${q.answered ? 'border-green-200 dark:border-green-800 bg-green-50 dark:bg-green-900/30' : 'border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800'}`}>
+                          <p className="text-gray-700 dark:text-gray-300">{q.content}</p>
+                          <p className={`mt-1 text-[10px] font-medium ${q.answered ? 'text-green-600 dark:text-green-400' : 'text-gray-400'}`}>
+                            {q.answered ? 'Answered' : 'Waiting for answer…'}
+                          </p>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+          </div>
         </div>
       </div>
 
@@ -1243,7 +1461,8 @@ export default function StudentSession() {
             aria-label="Exit fullscreen"
           >
             <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-              <path strokeLinecap="round" strokeLinejoin="round" d="M9 9V5H5m0 14h4v-4m6-6h4V5m-4 14h4v-4" />
+              {/* Exit-fullscreen: corners face center */}
+              <path strokeLinecap="round" strokeLinejoin="round" d="M4 8H8V4 M16 4V8H20 M20 16H16V20 M8 20V16H4" />
             </svg>
           </button>
           <div className="pointer-events-none fixed top-3 right-20 z-40 hidden lg:block rounded-full bg-black/50 px-3 py-1.5 text-[10px] tracking-wide text-white/75 backdrop-blur-sm">

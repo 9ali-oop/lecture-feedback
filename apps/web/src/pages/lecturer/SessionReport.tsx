@@ -1,4 +1,4 @@
-import { useEffect, useState, useMemo } from 'react';
+import React, { useEffect, useState, useMemo } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import Layout from '../../components/Layout.tsx';
 import FeedbackPieChart from '../../components/FeedbackPieChart.tsx';
@@ -7,7 +7,7 @@ import { useAuth } from '../../contexts/AuthContext.tsx';
 import { api } from '../../lib/api.ts';
 import { AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer, ReferenceLine } from 'recharts';
 import EngagementGauge from '../../components/EngagementGauge.tsx';
-import type { SessionReport as Report, SlideReport, SlideNote, ConfusionHighlight, TimelineBucket, ReflectionSummary, SmartRecommendation, EngagementAnalytics } from '@lecture-feedback/shared';
+import type { SessionReport as Report, SlideReport, SlideNote, ConfusionHighlight, TimelineBucket, ReflectionSummary, SmartRecommendation, EngagementAnalytics, LearningDynamicsBlock, Emoji } from '@lecture-feedback/shared';
 
 // ── Sub-components ──────────────────────────────────────────────────────────
 
@@ -157,6 +157,218 @@ function formatSeconds(sec: number): string {
   const m = Math.floor(sec / 60);
   const s = sec % 60;
   return `${m}:${s.toString().padStart(2, '0')}`;
+}
+
+// ── Learning dynamics (Markov) helpers ──────────────────────────────────────
+
+const MARKOV_STATES: Emoji[] = ['got_it', 'neutral', 'confused', 'lost'];
+const MARKOV_EMOJI: Record<Emoji, string> = {
+  got_it: '😊', neutral: '😐', confused: '😕', lost: '😵',
+};
+const MARKOV_LABEL: Record<Emoji, string> = {
+  got_it: 'Got it', neutral: 'Neutral', confused: 'Confused', lost: 'Lost',
+};
+
+/** Class-wide 4×4 transition matrix rendered as a heatmap with raw counts. */
+function TransitionMatrixHeatmap({ matrix, counts }: { matrix: number[][]; counts: number[][] }) {
+  return (
+    <div className="inline-block">
+      <div className="grid" style={{ gridTemplateColumns: 'auto repeat(4, minmax(0, 1fr))', gap: '2px' }}>
+        <div />
+        {MARKOV_STATES.map((s) => (
+          <div key={s} className="text-center text-[10px] text-gray-500 dark:text-gray-400 pb-1">
+            {MARKOV_EMOJI[s]}
+          </div>
+        ))}
+        {MARKOV_STATES.map((from, i) => (
+          <React.Fragment key={from}>
+            <div className="flex items-center justify-end pr-2 text-[10px] text-gray-500 dark:text-gray-400">
+              {MARKOV_EMOJI[from]}
+            </div>
+            {MARKOV_STATES.map((to, j) => {
+              const p = matrix[i][j];
+              const raw = counts[i][j];
+              // Indigo intensity proportional to probability
+              const alpha = 0.15 + p * 0.85;
+              return (
+                <div
+                  key={to}
+                  title={`P(${MARKOV_LABEL[to]} | ${MARKOV_LABEL[from]}) = ${p.toFixed(3)}  (${raw} observed)`}
+                  className="flex items-center justify-center rounded-md text-[10px] font-semibold text-white"
+                  style={{
+                    width: 44, height: 34,
+                    background: raw === 0
+                      ? 'rgba(148, 163, 184, 0.25)'
+                      : `rgba(99, 102, 241, ${alpha})`,
+                  }}
+                >
+                  {(p * 100).toFixed(0)}%
+                </div>
+              );
+            })}
+          </React.Fragment>
+        ))}
+      </div>
+      <div className="mt-1 pl-8 text-[9px] text-gray-400">rows = from, cols = to</div>
+    </div>
+  );
+}
+
+/** Renders a trajectory as spaced emoji with a recovery ✓ chip if applicable. */
+function TrajectoryLine({ sequence, recovered }: { sequence: Emoji[]; recovered: boolean }) {
+  return (
+    <div className="flex items-center gap-1">
+      <div className="flex gap-0.5 text-base leading-none">
+        {sequence.map((e, i) => <span key={i}>{MARKOV_EMOJI[e]}</span>)}
+      </div>
+      {recovered && (
+        <span className="rounded-full bg-emerald-100 dark:bg-emerald-900/30 px-1.5 py-0.5 text-[9px] font-medium text-emerald-700 dark:text-emerald-300">
+          recovered
+        </span>
+      )}
+    </div>
+  );
+}
+
+/** Threshold above which the at-risk list auto-truncates to top-N.
+ *  Sized so small tutorials always show everything, while a lecture-hall
+ *  class gets a focused "top 5 most at-risk" with the rest on demand. */
+const LARGE_CLASS_THRESHOLD = 20;
+const LARGE_CLASS_AT_RISK_TOP_N = 5;
+
+/** Main learning-dynamics panel. */
+function LearningDynamicsPanel({ ld }: { ld: LearningDynamicsBlock }) {
+  const [showBody, setShowBody] = useState(true);
+  const [showAllAtRisk, setShowAllAtRisk] = useState(false);
+  const largeClass = ld.activeStudents > LARGE_CLASS_THRESHOLD;
+
+  const atRiskVisible = largeClass && !showAllAtRisk
+    ? ld.atRisk.slice(0, LARGE_CLASS_AT_RISK_TOP_N)
+    : ld.atRisk;
+  const atRiskHidden = ld.atRisk.length - atRiskVisible.length;
+
+  const expected = ld.expectedRecovery;
+  // Bar scale — use max of displayed values so bars are comparable
+  const displayed: Array<[Emoji, number]> = (['neutral', 'confused', 'lost'] as const)
+    .map((s): [Emoji, number] | null => {
+      const v = expected[s];
+      return v === null ? null : [s, v];
+    })
+    .filter((x): x is [Emoji, number] => x !== null);
+  const barMax = displayed.length > 0
+    ? Math.max(...displayed.map(([, v]) => v)) * 1.25
+    : 1;
+
+  return (
+    <div className="mb-8 rounded-2xl bg-white dark:bg-gray-900 p-6 shadow-sm ring-1 ring-gray-100 dark:ring-gray-800">
+      <button
+        onClick={() => setShowBody((v) => !v)}
+        className="flex w-full items-start justify-between gap-3"
+      >
+        <div className="flex items-start gap-2">
+          <h2 className="font-semibold text-gray-900 dark:text-gray-100">Learning dynamics</h2>
+          <span className="mt-0.5 text-[10px] text-gray-400">Markov transition analysis</span>
+        </div>
+        <span className="shrink-0 text-xs text-gray-400">{showBody ? 'Hide' : 'Show'}</span>
+      </button>
+
+      {showBody && (
+        <>
+          <p className="mt-1 mb-4 text-xs text-gray-500 dark:text-gray-400">
+            Each student&rsquo;s emoji sequence modelled as a Markov chain. The matrix below shows the class-wide probability of moving between states; expected recovery is the number of slides to reach <span className="font-semibold">got it</span> from each state, derived from the fundamental matrix (I&minus;Q)⁻¹.
+          </p>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+            <div>
+              <h3 className="mb-2 text-xs font-semibold uppercase tracking-wider text-gray-500 dark:text-gray-400">
+                Transition matrix (P)
+              </h3>
+              <TransitionMatrixHeatmap matrix={ld.transitionMatrix} counts={ld.transitionCounts} />
+              <p className="mt-2 text-[10px] text-gray-400">
+                {ld.sampleSize} observed transitions across {ld.activeStudents} student{ld.activeStudents !== 1 ? 's' : ''}; Laplace-smoothed.
+              </p>
+            </div>
+
+            <div>
+              <h3 className="mb-2 text-xs font-semibold uppercase tracking-wider text-gray-500 dark:text-gray-400">
+                Expected slides to mastery
+              </h3>
+              <div className="space-y-2">
+                {(['neutral', 'confused', 'lost'] as const).map((state) => {
+                  const val = expected[state];
+                  const pct = val === null ? 0 : Math.min(100, (val / barMax) * 100);
+                  return (
+                    <div key={state} className="flex items-center gap-2">
+                      <span className="w-24 text-xs text-gray-600 dark:text-gray-300">
+                        {MARKOV_EMOJI[state]} from {MARKOV_LABEL[state].toLowerCase()}
+                      </span>
+                      <div className="flex-1 h-2 rounded-full bg-gray-100 dark:bg-gray-800 overflow-hidden">
+                        <div className="h-full rounded-full bg-indigo-500" style={{ width: `${pct}%` }} />
+                      </div>
+                      <span className="w-20 text-right text-xs font-semibold tabular-nums text-gray-900 dark:text-gray-100">
+                        {val === null ? '—' : `${val.toFixed(1)} slides`}
+                      </span>
+                    </div>
+                  );
+                })}
+              </div>
+              {ld.recoveryNote && (
+                <p className="mt-2 text-[10px] text-amber-600 dark:text-amber-400">{ld.recoveryNote}</p>
+              )}
+            </div>
+          </div>
+
+          {ld.atRisk.length > 0 && (
+            <div className="mt-5">
+              <h3 className="mb-2 text-xs font-semibold uppercase tracking-wider text-red-600 dark:text-red-400">
+                At-risk students ({ld.atRisk.length})
+              </h3>
+              <ul className="space-y-1.5">
+                {atRiskVisible.map((s) => (
+                  <li key={s.studentId} className="flex items-center justify-between gap-3 rounded-lg bg-red-50 dark:bg-red-900/20 px-3 py-2">
+                    <div className="min-w-0">
+                      <div className="truncate text-xs font-medium text-gray-800 dark:text-gray-200">{s.studentName}</div>
+                      <div className="mt-0.5"><TrajectoryLine sequence={s.sequence} recovered={s.recovered} /></div>
+                    </div>
+                    <span className="shrink-0 rounded-full bg-red-100 dark:bg-red-900/30 px-2 py-0.5 text-[10px] font-semibold text-red-700 dark:text-red-300 tabular-nums">
+                      risk {s.riskScore.toFixed(2)}
+                    </span>
+                  </li>
+                ))}
+              </ul>
+              {atRiskHidden > 0 && (
+                <button
+                  onClick={() => setShowAllAtRisk(true)}
+                  className="mt-2 text-[11px] font-medium text-red-600 dark:text-red-400 hover:text-red-700 dark:hover:text-red-300"
+                >
+                  + {atRiskHidden} more at risk — show all
+                </button>
+              )}
+            </div>
+          )}
+
+          <details className="mt-4 text-[11px] text-gray-500 dark:text-gray-400">
+            <summary className="cursor-pointer hover:text-gray-700 dark:hover:text-gray-300">
+              Show all student trajectories ({ld.students.length})
+            </summary>
+            <ul className="mt-2 space-y-1">
+              {ld.students.map((s) => (
+                <li key={s.studentId} className="flex items-center justify-between gap-3 rounded-lg bg-gray-50 dark:bg-gray-800 px-3 py-1.5">
+                  <div className="flex items-center gap-3 min-w-0">
+                    <span className="w-32 truncate text-xs text-gray-700 dark:text-gray-300">{s.studentName}</span>
+                    <TrajectoryLine sequence={s.sequence} recovered={s.recovered} />
+                  </div>
+                  <span className="shrink-0 tabular-nums text-[10px] text-gray-500 dark:text-gray-400">
+                    H={s.entropy.toFixed(2)} · risk {s.riskScore.toFixed(2)}
+                  </span>
+                </li>
+              ))}
+            </ul>
+          </details>
+        </>
+      )}
+    </div>
+  );
 }
 
 // ── Sort/filter types ───────────────────────────────────────────────────────
@@ -387,24 +599,52 @@ export default function SessionReport({ backUrl }: { backUrl?: string }) {
                   <span className="w-20 text-[11px] text-gray-500 dark:text-gray-400">{sc.signalName}</span>
                   <div className="flex-1 flex items-center gap-1.5">
                     <div className="flex-1 h-1.5 rounded-full bg-gray-100 dark:bg-gray-800 overflow-hidden">
-                      <div className="h-full rounded-full bg-blue-500" style={{ width: `${sc.soloScore}%` }} />
+                      <div className="h-full rounded-full bg-blue-500" style={{ width: `${sc.soloScore ?? 0}%` }} />
                     </div>
-                    <span className="w-8 text-right text-[10px] font-medium text-gray-600 dark:text-gray-300 tabular-nums">{sc.soloScore}</span>
+                    <span
+                      className="w-8 text-right text-[10px] font-medium text-gray-600 dark:text-gray-300 tabular-nums"
+                      title={sc.soloScore === null ? 'No data collected for this signal' : undefined}
+                    >
+                      {sc.soloScore === null ? '—' : sc.soloScore}
+                    </span>
                   </div>
-                  <span className="w-10 text-right text-[10px] text-gray-400 dark:text-gray-500 tabular-nums">r={sc.correlation}</span>
+                  <span
+                    className="w-10 text-right text-[10px] text-gray-400 dark:text-gray-500 tabular-nums"
+                    title={sc.correlation === null ? 'Correlation undefined — signal is constant or too sparse across slides' : `Pearson r = ${sc.correlation}`}
+                  >
+                    r={sc.correlation === null ? '—' : sc.correlation}
+                  </span>
                 </div>
               ))}
             </div>
-            <div className="mt-3 rounded-lg bg-blue-50 dark:bg-blue-900/20 px-3 py-2">
-              <p className="text-[11px] text-blue-700 dark:text-blue-300">
-                Multi-signal composite ({engagement.overallScore.overall}) vs best single signal (
-                {Math.max(...engagement.signalComparison.map(s => s.soloScore))}
-                ): {engagement.overallScore.overall > Math.max(...engagement.signalComparison.map(s => s.soloScore))
-                  ? `+${engagement.overallScore.overall - Math.max(...engagement.signalComparison.map(s => s.soloScore))} points improvement`
-                  : 'comparable'
-                }
-              </p>
-            </div>
+            {(() => {
+              const composite = engagement.overallScore.overall;
+              // Only compare against signals that actually had data — otherwise
+              // a "best single = 0" from an absent signal makes the comparison
+              // meaningless.
+              const measured = engagement.signalComparison.filter((s) => s.soloScore !== null);
+              if (measured.length === 0) return null;
+              const best = measured.reduce(
+                (acc, s) => (s.soloScore as number) > acc.score ? { score: s.soloScore as number, name: s.signalName } : acc,
+                { score: -1, name: '' },
+              );
+              const diff = composite - best.score;
+              let message: string;
+              if (diff >= 3) {
+                message = `+${diff} points over the best single signal (${best.name}) — fusion helps.`;
+              } else if (diff <= -3) {
+                message = `${best.name} alone scored ${best.score}; the composite is ${-diff} points lower because other signals are weaker on this session.`;
+              } else {
+                message = `Within ${Math.abs(diff)} points of the best single signal (${best.name}) — roughly comparable.`;
+              }
+              return (
+                <div className="mt-3 rounded-lg bg-blue-50 dark:bg-blue-900/20 px-3 py-2">
+                  <p className="text-[11px] text-blue-700 dark:text-blue-300">
+                    Multi-signal composite ({composite}) vs best single signal ({best.score}): {message}
+                  </p>
+                </div>
+              );
+            })()}
           </div>
         </div>
       )}
@@ -423,6 +663,11 @@ export default function SessionReport({ backUrl }: { backUrl?: string }) {
             ))}
           </div>
         </div>
+      )}
+
+      {/* Learning dynamics (lecturer only) */}
+      {isLecturer && report.learningDynamics && report.learningDynamics.activeStudents > 0 && (
+        <LearningDynamicsPanel ld={report.learningDynamics} />
       )}
 
       {/* Engagement Timeline */}
@@ -607,9 +852,18 @@ export default function SessionReport({ backUrl }: { backUrl?: string }) {
                         {slide.engagement.overall}
                       </span>
                     )}
-                    {confusionAreaCount > 0 && (
+                    {isLecturer && confusionAreaCount > 0 && (
                       <span className="rounded-full bg-red-100 dark:bg-red-900/30 px-1.5 py-0.5 text-[10px] font-semibold text-red-600 dark:text-red-300">
                         {confusionAreaCount} area{confusionAreaCount !== 1 ? 's' : ''}
+                      </span>
+                    )}
+                    {!isLecturer && slide.yourVote && (
+                      <span
+                        className="inline-flex items-center gap-1 rounded-full bg-blue-50 dark:bg-blue-900/30 px-2 py-0.5 text-[10px] font-medium text-blue-700 dark:text-blue-300"
+                        title="Your answer on this slide"
+                      >
+                        <span className="text-sm leading-none">{MARKOV_EMOJI[slide.yourVote]}</span>
+                        <span>your answer</span>
                       </span>
                     )}
                   </div>

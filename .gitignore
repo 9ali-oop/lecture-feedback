@@ -1,6 +1,47 @@
 node_modules
 dist
+# Build / runtime artefacts
 .env
+.vite/
+# Tooling local state (editor, MCP, browser automation, CI)
+.claude/
+.mcp.json
+.playwright-mcp/
+.lighthouse/
+*.local.json
+# Debug / one-off development screenshots at repo root — all of them.
+# Report figures live under report/figures/ and usability-study screenshots
+# live under report/usability-study/results/screenshots/ and are tracked.
+/*.png
+mobile-audit/
+# Dev-log screenshot archive (visual changelog captured during iteration).
+screenshots/
+# Local temp artefacts from mobile/landscape testing scripts.
+tmp/
+# External research PDFs collected for the lit review — cited via refs.bib
+# rather than committed as blobs, to keep the repo lean and avoid shipping
+# copyrighted publisher material.
+research/papers/
+# External tooling / projector installer bundled with the study venue
+report/usability-study/AirMedia_*.exe
+# External EPA briefing slides (not own work)
+docs/Year 4 and the EPA*.pptx
+# External reference materials collected during project (not own work)
+docs/fyp guide/
+lectures and guidance/
+EPA/
+UserTesting/
+docs/archive/
+# LaTeX build / intermediate artefacts — regeneratable from source
+report/**/*.aux
+report/**/*.log
+report/**/*.synctex.gz
+report/**/*.out
+report/**/*.toc
+report/**/*.fls
+report/**/*.fdb_latexmk
+report/skeleton.pdf
+report/chapters.zip
 # Catch env-style files Neon/Render/etc download when you hit "download .env".
 # They look like env.txt / production.env / neon.env and have real secrets.
 *.env
@@ -12,3 +53,11 @@ uploads/
 .tunnel-url
 # One-off generated TOTP enrolment QRs. These are secrets-equivalent.
 *-totp-qr.png
+admin-qr.png
+# Usability study: raw participant audio is destroyed after transcription per consent form.
+# The audio/ folder is local-only and must never be committed.
+report/usability-study/results/audio/
+# Real-name to participant-ID mapping. Local-only. Required at anonymisation
+# time only; must never be committed. Consent form guarantees names are not
+# linked to data in any surviving file.
+report/usability-study/results/.name-mapping.private.json

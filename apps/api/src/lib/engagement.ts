@@ -68,13 +68,17 @@ export function computePaceScore(dist: PaceDistribution): number | null {
 /**
  * Question engagement score: questions indicate active participation.
  * Scales linearly: each question adds 25 points, capped at 100.
- * Returns null if no participants.
+ * Returns null if no participants OR no questions — on a slide where nobody
+ * asked anything the signal is undefined (silence isn't evidence of low
+ * engagement, it's absence of signal), so we let the composite's weight
+ * redistribute to signals we can actually measure.
  */
 export function computeQuestionScore(
   questionCount: number,
   participantCount: number,
 ): number | null {
   if (participantCount === 0) return null;
+  if (questionCount === 0) return null;
   const perStudent = questionCount / participantCount;
   return Math.round(Math.min(100, perStudent * 80));
 }
@@ -96,13 +100,17 @@ export function computeConfusionScore(
 /**
  * Note activity score: % of students who took notes on this slide.
  * 100 = everyone took notes, 0 = nobody.
- * Returns null if no participants.
+ * Returns null if no participants OR nobody took notes — a title slide or
+ * a consensus slide where students listen without writing isn't a low-
+ * engagement slide, so we treat "no notes" as missing signal rather than
+ * a zero that drags the composite down.
  */
 export function computeNoteScore(
   studentsWithNotes: number,
   participantCount: number,
 ): number | null {
   if (participantCount === 0) return null;
+  if (studentsWithNotes === 0) return null;
   return Math.round(Math.min(100, (studentsWithNotes / participantCount) * 100));
 }
 
@@ -222,11 +230,15 @@ export function computeSessionEngagement(
 
 /**
  * Pearson correlation coefficient between two arrays.
- * Returns 0 if insufficient data or zero variance.
+ * Returns null when correlation is undefined — insufficient data (n<3) or
+ * zero variance in either series (e.g. a session-wide signal like pace that
+ * is constant across every slide). Returning 0 in those cases is misleading:
+ * zero correlation implies "we measured no linear relationship", whereas the
+ * truth is "we can't measure it at all".
  */
-export function pearsonCorrelation(xs: number[], ys: number[]): number {
+export function pearsonCorrelation(xs: number[], ys: number[]): number | null {
   const n = Math.min(xs.length, ys.length);
-  if (n < 3) return 0;
+  if (n < 3) return null;
 
   const meanX = xs.reduce((a, b) => a + b, 0) / n;
   const meanY = ys.reduce((a, b) => a + b, 0) / n;
@@ -241,7 +253,8 @@ export function pearsonCorrelation(xs: number[], ys: number[]): number {
   }
 
   const denom = Math.sqrt(sumX2 * sumY2);
-  return denom === 0 ? 0 : Math.round((sumXY / denom) * 100) / 100;
+  if (denom === 0) return null;
+  return Math.round((sumXY / denom) * 100) / 100;
 }
 
 /**
@@ -278,11 +291,11 @@ export function computeSignalComparisons(
 
     const avgSolo = soloScores.length > 0
       ? Math.round(soloScores.reduce((a, b) => a + b, 0) / soloScores.length)
-      : 0;
+      : null;
 
     const avgContribution = signalValues.length > 0
       ? Math.round(SIGNAL_WEIGHTS[key] * signalValues.reduce((a, b) => a + b, 0) / signalValues.length)
-      : 0;
+      : null;
 
     const r = pearsonCorrelation(signalValues, compositeScores);
 

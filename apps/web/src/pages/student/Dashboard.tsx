@@ -163,7 +163,7 @@ export default function StudentDashboard() {
       {/* Upcoming sessions */}
       {scheduledSessions.length > 0 && (
         <div className="mb-8">
-          <h2 className="mb-3 text-xs font-semibold uppercase tracking-widest text-gray-400 dark:text-gray-400">Upcoming</h2>
+          <h2 className="mb-3 text-xs font-semibold uppercase tracking-widest text-gray-500 dark:text-gray-400">Upcoming</h2>
           <div className="space-y-2">
             {scheduledSessions.map((session) => (
               <div
@@ -177,11 +177,11 @@ export default function StudentDashboard() {
                     </span>
                     <span className="font-medium text-gray-900 dark:text-gray-100">{session.title}</span>
                   </div>
-                  <p className="mt-0.5 text-xs text-gray-400 dark:text-gray-400">
+                  <p className="mt-0.5 text-xs text-gray-500 dark:text-gray-400">
                     {session.totalSlides > 0 ? `${session.totalSlides} slides` : 'No slides yet'}
                   </p>
                 </div>
-                <span className="rounded-full bg-gray-50 dark:bg-gray-800 px-2.5 py-0.5 text-xs font-medium text-gray-400 dark:text-gray-400">
+                <span className="rounded-full bg-gray-50 dark:bg-gray-800 px-2.5 py-0.5 text-xs font-medium text-gray-500 dark:text-gray-400">
                   Scheduled
                 </span>
               </div>
@@ -193,7 +193,7 @@ export default function StudentDashboard() {
       {/* Recent sessions */}
       {recentSessions.length > 0 && (
         <div className="mb-8">
-          <h2 className="mb-3 text-xs font-semibold uppercase tracking-widest text-gray-400 dark:text-gray-400">Recent sessions</h2>
+          <h2 className="mb-3 text-xs font-semibold uppercase tracking-widest text-gray-500 dark:text-gray-400">Recent sessions</h2>
           <div className="space-y-2">
             {recentSessions.map((session) => (
               <div
@@ -207,7 +207,7 @@ export default function StudentDashboard() {
                     </span>
                     <span className="font-medium text-gray-900 dark:text-gray-100">{session.title}</span>
                   </div>
-                  <p className="mt-0.5 text-xs text-gray-400 dark:text-gray-400">
+                  <p className="mt-0.5 text-xs text-gray-500 dark:text-gray-400">
                     {session.totalSlides} slides
                     {session.endedAt && ` · ${new Date(session.endedAt).toLocaleDateString('en-GB', { dateStyle: 'medium' })}`}
                   </p>
@@ -226,14 +226,14 @@ export default function StudentDashboard() {
 
       {/* Modules */}
       <div className="mb-4 flex items-center justify-between">
-        <h2 className="text-xs font-semibold uppercase tracking-widest text-gray-400 dark:text-gray-400">Modules</h2>
+        <h2 className="text-xs font-semibold uppercase tracking-widest text-gray-500 dark:text-gray-400">Modules</h2>
         <div className="flex rounded-xl bg-gray-100 dark:bg-gray-800 p-1">
           {(['enrolled', 'browse'] as const).map((t) => (
             <button
               key={t}
               onClick={() => setTab(t)}
               className={`rounded-lg px-3 py-1.5 text-xs font-medium transition ${
-                tab === t ? 'bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 shadow-sm' : 'text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-300'
+                tab === t ? 'bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 shadow-sm' : 'text-gray-600 dark:text-gray-400 hover:text-gray-800 dark:hover:text-gray-300'
               }`}
             >
               {t === 'enrolled' ? `My modules (${enrolledModules.length})` : `Browse (${browseModules.length})`}
@@ -266,7 +266,7 @@ export default function StudentDashboard() {
                 </span>
               </div>
               <h3 className="font-semibold text-gray-900 dark:text-gray-100 group-hover:text-blue-600 dark:group-hover:text-blue-400 transition">{mod.name}</h3>
-              <p className="mt-1 text-xs text-gray-400 dark:text-gray-400">{mod.lecturerName}</p>
+              <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">{mod.lecturerName}</p>
 
               <div className="mt-4">
                 {mod.enrolled ? (
@@ -290,7 +290,7 @@ export default function StudentDashboard() {
 
           {(tab === 'enrolled' ? enrolledModules : browseModules).length === 0 && (
             <div className="col-span-3 rounded-2xl bg-white dark:bg-gray-900 p-12 text-center shadow-sm ring-1 ring-gray-100 dark:ring-gray-800">
-              <p className="text-gray-400 dark:text-gray-400">
+              <p className="text-gray-500 dark:text-gray-400">
                 {tab === 'enrolled' ? 'No modules enrolled. Browse modules to enroll.' : 'No modules available.'}
               </p>
             </div>

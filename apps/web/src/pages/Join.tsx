@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext.tsx';
+import AccessibilityToggles from '../components/AccessibilityToggles.tsx';
 
 /**
  * Anonymous join flow for guest participants.
@@ -129,6 +130,9 @@ export default function Join() {
 
   return (
     <div className="flex min-h-[100dvh] items-center justify-center bg-gradient-to-br from-slate-50 via-white to-brand-50 dark:from-gray-950 dark:via-gray-900 dark:to-gray-950 px-4 py-8">
+      <div className="absolute right-4 top-4 flex items-center gap-1">
+        <AccessibilityToggles variant="corner" hideViewToggle />
+      </div>
       <div className="w-full max-w-sm">
         <div className="mb-8 text-center">
           <div className="mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-2xl bg-gradient-to-br from-brand-500 to-brand-700 shadow-lg shadow-brand-500/25">

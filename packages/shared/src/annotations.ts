@@ -26,6 +26,10 @@ export interface DrawStrokeMessage {
   color: string;
   width: number;       // normalized
   slideIndex: number;
+  // Set by the server (pass-through from the lecturer's current mode) when
+  // the lecturer is drawing on the shared whiteboard rather than on a slide.
+  // Students who opted to stay on the slide view filter these out locally.
+  whiteboard?: boolean;
 }
 
 export interface EraseStrokeMessage {
@@ -33,6 +37,7 @@ export interface EraseStrokeMessage {
   points: Point[];
   size: number;        // normalized
   slideIndex: number;
+  whiteboard?: boolean;
 }
 
 export interface ClearAnnotationsMessage {

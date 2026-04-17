@@ -4,6 +4,7 @@ import { ThemeProvider } from './contexts/ThemeContext.tsx';
 import { ViewModeProvider } from './contexts/ViewModeContext.tsx';
 import ErrorBoundary from './components/ErrorBoundary.tsx';
 import ProtectedRoute from './components/ProtectedRoute.tsx';
+import { LiveRegionProvider } from './components/LiveRegion.tsx';
 import Login from './pages/Login.tsx';
 import Register from './pages/Register.tsx';
 import Join from './pages/Join.tsx';
@@ -66,6 +67,7 @@ export default function App() {
     <ThemeProvider>
     <ViewModeProvider>
     <AuthProvider>
+    <LiveRegionProvider>
       <BrowserRouter>
         <ImpersonationBanner />
         <Routes>
@@ -91,6 +93,7 @@ export default function App() {
           <Route path="/student/report/:sessionId" element={<ProtectedRoute allowedRoles={['student']}><StudentSessionReport /></ProtectedRoute>} />
         </Routes>
       </BrowserRouter>
+    </LiveRegionProvider>
     </AuthProvider>
     </ViewModeProvider>
     </ThemeProvider>

@@ -231,9 +231,17 @@ export interface ProficiencyEngagement {
 export interface SignalComparison {
   signalName: string;
   weight: number;
-  soloScore: number;            // engagement if using only this signal
-  contribution: number;         // weighted contribution to composite
-  correlation: number;          // Pearson r with composite (-1 to 1)
+  // Engagement if using only this signal. null when the signal is absent from
+  // every slide (e.g. a session where nobody took any notes) — otherwise a 0
+  // would read as "zero engagement on this dimension", hiding the fact that
+  // there was no signal to measure at all.
+  soloScore: number | null;
+  // Weighted contribution to composite. Also null when the signal is absent.
+  contribution: number | null;
+  // Pearson r with composite (-1 to 1). null when the signal's variance
+  // across slides is zero (e.g. session-wide pace feedback) — correlation is
+  // undefined in that case and we show "—" in the UI instead of a misleading 0.
+  correlation: number | null;
 }
 
 /** Full engagement analytics block for the session report */
@@ -242,6 +250,44 @@ export interface EngagementAnalytics {
   perSlide: Array<{ slideIndex: number; engagement: EngagementScore }>;
   signalComparison: SignalComparison[];
   proficiencyBreakdown: ProficiencyEngagement[];
+}
+
+/** Learning-dynamics block — Markov-chain analysis of emoji trajectories.
+ *  Lecturer-only; omitted from student responses. */
+export interface LearningDynamicsBlock {
+  /** Smoothed 4×4 transition matrix, rows indexed by [got_it, neutral, confused, lost]. */
+  transitionMatrix: number[][];
+  /** Pre-smoothing raw counts, so the UI can flag low-evidence cells. */
+  transitionCounts: number[][];
+  /** Expected slides to reach got_it from each state; null if undefined even after smoothing. */
+  expectedRecovery: { got_it: number | null; neutral: number | null; confused: number | null; lost: number | null };
+  /** Explanatory note if any state's recovery couldn't be estimated, else null. */
+  recoveryNote: string | null;
+  /** Pooled transitions (pre-smoothing) used to estimate the matrix — signals confidence. */
+  sampleSize: number;
+  /** Count of students who gave any feedback. */
+  activeStudents: number;
+  /** Per-student trajectories, sorted by risk score descending. */
+  students: Array<{
+    studentId: string;
+    studentName: string;
+    sequence: Emoji[];
+    distribution: { got_it: number; neutral: number; confused: number; lost: number };
+    entropy: number;
+    endingState: Emoji | null;
+    tailNonMasteryLength: number;
+    riskScore: number;
+    recovered: boolean;
+  }>;
+  /** Subset of students above the at-risk threshold, same sort order. */
+  atRisk: Array<{
+    studentId: string;
+    studentName: string;
+    sequence: Emoji[];
+    endingState: Emoji | null;
+    riskScore: number;
+    recovered: boolean;
+  }>;
 }
 
 // ── Smart recommendations ───────────────────────────────────────────────────
@@ -301,6 +347,10 @@ export interface SlideReport {
   hasAnnotation: boolean;
   confusionContexts: ConfusionContext[];
   engagement?: EngagementScore;
+  /** Present only on student-role responses — the requesting student's own
+   *  emoji on this slide, carried forward from earlier votes if they didn't
+   *  re-vote. Lets the student see their personal answer beside the class %. */
+  yourVote?: Emoji;
 }
 
 export interface SessionReport {
@@ -310,6 +360,8 @@ export interface SessionReport {
   slides: SlideReport[];
   overallDistribution: FeedbackDistribution;
   engagement?: EngagementAnalytics;
+  /** Present only for lecturer/admin responses. */
+  learningDynamics?: LearningDynamicsBlock;
 }
 
 // ── Annotation types ─────────────────────────────────────────────────────────

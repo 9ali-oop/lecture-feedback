@@ -45,7 +45,7 @@ export default function LecturerDashboard() {
       <div className="mb-8 flex items-center justify-between">
         <div>
           <h1 className="text-2xl font-bold tracking-tight text-gray-900 dark:text-gray-100">My modules</h1>
-          <p className="mt-1 text-sm text-gray-400 dark:text-gray-400">Welcome back, {user?.name}</p>
+          <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">Welcome back, {user?.name}</p>
         </div>
         <button
           onClick={() => setShowForm(true)}
@@ -114,7 +114,7 @@ export default function LecturerDashboard() {
         </div>
       ) : modules.length === 0 ? (
         <div className="rounded-2xl bg-white dark:bg-gray-900 p-12 text-center shadow-sm ring-1 ring-gray-100 dark:ring-gray-800">
-          <p className="text-gray-400 dark:text-gray-400">No modules yet. Create your first one.</p>
+          <p className="text-gray-500 dark:text-gray-400">No modules yet. Create your first one.</p>
         </div>
       ) : (
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
@@ -146,7 +146,7 @@ export default function LecturerDashboard() {
                 </button>
               </div>
               <h3 className="font-semibold text-gray-900 dark:text-gray-100 group-hover:text-blue-600 dark:group-hover:text-blue-400 transition">{mod.name}</h3>
-              <p className="mt-1 text-xs text-gray-400 dark:text-gray-400">
+              <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
                 {mod.enrolledCount} {mod.enrolledCount === 1 ? 'student' : 'students'} enrolled
               </p>
             </div>

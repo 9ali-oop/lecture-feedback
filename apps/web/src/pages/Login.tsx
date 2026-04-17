@@ -2,15 +2,12 @@ import { useState, useEffect } from 'react';
 import { useNavigate, Link, useSearchParams } from 'react-router-dom';
 import { api } from '../lib/api.ts';
 import { useAuth } from '../contexts/AuthContext.tsx';
-import { useTheme } from '../contexts/ThemeContext.tsx';
-import { useViewMode } from '../contexts/ViewModeContext.tsx';
 import { roleHome } from '../lib/roles.ts';
+import AccessibilityToggles from '../components/AccessibilityToggles.tsx';
 
 export default function Login() {
   const navigate = useNavigate();
   const { login, user, loading: authLoading } = useAuth();
-  const { resolved, toggle } = useTheme();
-  const { mode, toggle: toggleView } = useViewMode();
   const [searchParams] = useSearchParams();
   const [email, setEmail] = useState('');
   const [code, setCode] = useState('');
@@ -69,38 +66,9 @@ export default function Login() {
 
   return (
     <div className="flex min-h-screen items-center justify-center bg-gradient-to-br from-slate-50 via-white to-brand-50 dark:from-gray-950 dark:via-gray-900 dark:to-gray-950 px-4">
-      {/* View mode + Theme toggles */}
+      {/* View mode + Theme + Dyslexia toggles */}
       <div className="absolute right-4 top-4 flex items-center gap-1">
-        <button
-          onClick={toggleView}
-          className="rounded-lg p-2 text-gray-400 transition hover:bg-gray-100 hover:text-gray-600 dark:text-gray-400 dark:hover:bg-gray-800 dark:hover:text-gray-300"
-          title={`Switch to ${mode === 'desktop' ? 'phone' : 'desktop'} view`}
-        >
-          {mode === 'desktop' ? (
-            <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-              <path strokeLinecap="round" strokeLinejoin="round" d="M12 18h.01M8 21h8a2 2 0 002-2V5a2 2 0 00-2-2H8a2 2 0 00-2 2v14a2 2 0 002 2z" />
-            </svg>
-          ) : (
-            <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-              <path strokeLinecap="round" strokeLinejoin="round" d="M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" />
-            </svg>
-          )}
-        </button>
-      <button
-        onClick={toggle}
-        className="rounded-lg p-2 text-gray-400 transition hover:bg-gray-100 hover:text-gray-600 dark:text-gray-400 dark:hover:bg-gray-800 dark:hover:text-gray-300"
-        title={`Switch to ${resolved === 'dark' ? 'light' : 'dark'} mode`}
-      >
-        {resolved === 'dark' ? (
-          <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-            <path strokeLinecap="round" strokeLinejoin="round" d="M12 3v1m0 16v1m9-9h-1M4 12H3m15.364 6.364l-.707-.707M6.343 6.343l-.707-.707m12.728 0l-.707.707M6.343 17.657l-.707.707M16 12a4 4 0 11-8 0 4 4 0 018 0z" />
-          </svg>
-        ) : (
-          <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-            <path strokeLinecap="round" strokeLinejoin="round" d="M20.354 15.354A9 9 0 018.646 3.646 9.003 9.003 0 0012 21a9.003 9.003 0 008.354-5.646z" />
-          </svg>
-        )}
-      </button>
+        <AccessibilityToggles variant="corner" />
       </div>
 
       <div className="w-full max-w-sm">
@@ -111,7 +79,7 @@ export default function Login() {
             </svg>
           </div>
           <h1 className="text-2xl font-bold tracking-tight text-gray-900 dark:text-gray-100">LectureFlow</h1>
-          <p className="mt-1 text-sm text-gray-400 dark:text-gray-400">University of Leeds</p>
+          <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">University of Leeds</p>
         </div>
 
         <div className="rounded-2xl bg-white dark:bg-gray-900 p-8 shadow-xl shadow-gray-200/60 dark:shadow-black/20 ring-1 ring-gray-100 dark:ring-gray-800">
@@ -119,10 +87,11 @@ export default function Login() {
 
           <form onSubmit={handleSubmit} className="space-y-5">
             <div>
-              <label className="mb-1.5 block text-sm font-medium text-gray-700 dark:text-gray-300">
+              <label htmlFor="login-email" className="mb-1.5 block text-sm font-medium text-gray-700 dark:text-gray-300">
                 Email address
               </label>
               <input
+                id="login-email"
                 type="email"
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
@@ -133,10 +102,11 @@ export default function Login() {
             </div>
 
             <div>
-              <label className="mb-1.5 block text-sm font-medium text-gray-700 dark:text-gray-300">
+              <label htmlFor="login-code" className="mb-1.5 block text-sm font-medium text-gray-700 dark:text-gray-300">
                 Authenticator code
               </label>
               <input
+                id="login-code"
                 type="text"
                 inputMode="numeric"
                 pattern="[0-9]{6}"
@@ -147,7 +117,7 @@ export default function Login() {
                 required
                 className="w-full rounded-xl border border-gray-200 dark:border-gray-700 bg-gray-50/50 dark:bg-gray-800 px-4 py-3 text-center text-lg font-mono tracking-[0.3em] text-gray-900 dark:text-gray-100 outline-none transition placeholder:text-gray-300 dark:placeholder:text-gray-600 focus:border-blue-500 dark:focus:border-blue-500 focus:bg-white dark:focus:bg-gray-800 focus:ring-2 focus:ring-blue-100 dark:focus:ring-blue-900/40"
               />
-              <p className="mt-1.5 text-xs text-gray-400 dark:text-gray-400">
+              <p className="mt-1.5 text-xs text-gray-500 dark:text-gray-400">
                 6-digit code from your authenticator app
               </p>
             </div>
@@ -170,7 +140,7 @@ export default function Login() {
             </button>
           </form>
 
-          <p className="mt-5 text-center text-sm text-gray-400 dark:text-gray-400">
+          <p className="mt-5 text-center text-sm text-gray-500 dark:text-gray-400">
             First time?{' '}
             <Link to="/register" className="font-medium text-blue-600 hover:text-blue-700 dark:text-blue-400 dark:hover:text-blue-300">
               Set up your account

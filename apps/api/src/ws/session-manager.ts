@@ -13,7 +13,7 @@ import type {
 } from '@lecture-feedback/shared';
 import { db } from '../db/index.js';
 import { feedbackEvents, modules, moduleEnrollments, sessionParticipants, sessions, slideTimings } from '../db/schema.js';
-import { eq, and, isNull } from 'drizzle-orm';
+import { eq, and, isNull, desc } from 'drizzle-orm';
 import { computeSlideEngagement } from '../lib/engagement.js';
 
 interface StudentState {
@@ -44,6 +44,14 @@ interface SessionRoom {
   annotationAccessQueue: AnnotationAccessRequest[];
   grantedAnnotator: { studentId: string; studentName: string } | null;
   paceFeedback: Map<string, PaceValue>; // studentId -> current pace value
+  // True whenever the lecturer is drawing on the shared whiteboard rather
+  // than on a slide. Set by WHITEBOARD_TOGGLE. While active, incoming
+  // strokes are broadcast to students (so students who chose to follow the
+  // whiteboard see them) but are NOT persisted into room.annotations for
+  // the current slideIndex — otherwise whiteboard scribbles contaminate
+  // the slide's annotation history, showing up when anyone revisits that
+  // slide later. Flipping back to slide mode resumes persistence.
+  whiteboardActive: boolean;
   // Engagement tracking
   questionCounts: Map<number, number>;  // slideIndex -> count
   confusionCounts: Map<number, number>; // slideIndex -> count
@@ -133,6 +141,7 @@ export class SessionManager {
         annotationAccessQueue: [],
         grantedAnnotator: null,
         paceFeedback: new Map(),
+        whiteboardActive: false,
         questionCounts: new Map(),
         confusionCounts: new Map(),
         noteActivity: new Map(),
@@ -350,6 +359,32 @@ export class SessionManager {
       console.warn(`[session-manager] could not record participation for ${userId} in ${sessionId}:`, (err as Error).message);
     }
 
+    // Restore the student's most recent emoji for the CURRENT slide if they
+    // voted before disconnecting. Without this, a simple phone refresh wipes
+    // their live vote from the lecturer's dashboard even though the DB still
+    // has it — lecturer briefly sees got_it=2 → 1 → 1 after reconnect until
+    // the student re-taps. We scope the lookup to the current slide so a
+    // stale vote from 10 minutes ago on an old slide doesn't get resurrected.
+    const [recent] = await db
+      .select({ emoji: feedbackEvents.emoji })
+      .from(feedbackEvents)
+      .where(and(
+        eq(feedbackEvents.sessionId, sessionId),
+        eq(feedbackEvents.studentId, userId),
+        eq(feedbackEvents.slideIndex, room.currentSlide),
+      ))
+      .orderBy(desc(feedbackEvents.selectedAt))
+      .limit(1);
+    if (recent) {
+      const state = room.students.get(userId);
+      if (state) {
+        state.currentEmoji = recent.emoji;
+        // Reset the timer so the next flush measures post-reconnect duration
+        // only; the pre-disconnect duration was already written on onClose.
+        state.emojiSelectedAt = Date.now();
+      }
+    }
+
     // Send current slide to student
     send(ws, {
       type: 'SLIDE_UPDATE',
@@ -364,12 +399,17 @@ export class SessionManager {
       annotations: room.annotations.get(room.currentSlide) ?? [],
     });
 
-    // Notify lecturer
+    // Notify lecturer — send both the participant count AND the refreshed
+    // distribution so the restored emoji (above) is reflected immediately.
     if (room.lecturerWs) {
       send(room.lecturerWs, {
         type: 'PARTICIPANT_COUNT',
         active: room.students.size,
         total: room.students.size,
+      });
+      send(room.lecturerWs, {
+        type: 'FEEDBACK_UPDATE',
+        distribution: computeDistribution(room),
       });
     }
   }
@@ -484,7 +524,12 @@ export class SessionManager {
 
     const now = Date.now();
 
-    // Persist the previous emoji with duration
+    // Persist the previous emoji with duration. selectedAt MUST be the moment
+    // the student picked the emoji, not now() (which is the flush moment —
+    // usually a slide change, occasionally a fresh pick replacing the old
+    // one). Without this, every feedback row's timestamp clumps at slide
+    // transitions, so the report's timeline chart shows confusion spikes
+    // appearing a slide late.
     if (student.currentEmoji && student.emojiSelectedAt) {
       const duration = now - student.emojiSelectedAt;
       db.insert(feedbackEvents)
@@ -494,6 +539,7 @@ export class SessionManager {
           slideIndex: student.slideIndex,
           emoji: student.currentEmoji,
           durationMs: duration,
+          selectedAt: new Date(student.emojiSelectedAt),
         })
         .catch(console.error);
     }
@@ -607,6 +653,7 @@ export class SessionManager {
   handleWhiteboardToggle(sessionId: string, enabled: boolean) {
     const room = this.rooms.get(sessionId);
     if (!room) return;
+    room.whiteboardActive = enabled;
     this.broadcastToStudents(room, { type: 'WHITEBOARD_TOGGLE', enabled });
   }
 
@@ -641,18 +688,24 @@ export class SessionManager {
     if (!isValidStroke(points, color, width)) return;
     if (!isValidSlideIndex(slideIndex, room.totalSlides)) return;
 
-    const annotation: Annotation = {
-      type: 'draw',
-      points,
-      color,
-      width,
-      timestamp: Date.now() - room.sessionStartTime,
-    };
-
-    if (!room.annotations.has(slideIndex)) {
-      room.annotations.set(slideIndex, []);
+    // Only persist into the slide's annotation history when the stroke is
+    // actually on the slide. Whiteboard scribbles are transient by design —
+    // writing them into room.annotations would make them reappear as slide
+    // annotations when anyone revisits that slide, and leak to students who
+    // stay on slide view while the lecturer is in whiteboard mode.
+    if (!room.whiteboardActive) {
+      const annotation: Annotation = {
+        type: 'draw',
+        points,
+        color,
+        width,
+        timestamp: Date.now() - room.sessionStartTime,
+      };
+      if (!room.annotations.has(slideIndex)) {
+        room.annotations.set(slideIndex, []);
+      }
+      room.annotations.get(slideIndex)!.push(annotation);
     }
-    room.annotations.get(slideIndex)!.push(annotation);
 
     this.broadcastToStudents(room, {
       type: 'DRAW_STROKE',
@@ -660,6 +713,7 @@ export class SessionManager {
       color,
       width,
       slideIndex,
+      whiteboard: room.whiteboardActive || undefined,
     });
   }
 
@@ -670,23 +724,25 @@ export class SessionManager {
     if (!isValidStroke(points, undefined, size)) return;
     if (!isValidSlideIndex(slideIndex, room.totalSlides)) return;
 
-    const annotation: Annotation = {
-      type: 'erase',
-      points,
-      size,
-      timestamp: Date.now() - room.sessionStartTime,
-    };
-
-    if (!room.annotations.has(slideIndex)) {
-      room.annotations.set(slideIndex, []);
+    if (!room.whiteboardActive) {
+      const annotation: Annotation = {
+        type: 'erase',
+        points,
+        size,
+        timestamp: Date.now() - room.sessionStartTime,
+      };
+      if (!room.annotations.has(slideIndex)) {
+        room.annotations.set(slideIndex, []);
+      }
+      room.annotations.get(slideIndex)!.push(annotation);
     }
-    room.annotations.get(slideIndex)!.push(annotation);
 
     this.broadcastToStudents(room, {
       type: 'ERASE_STROKE',
       points,
       size,
       slideIndex,
+      whiteboard: room.whiteboardActive || undefined,
     });
   }
 
@@ -914,6 +970,7 @@ export class SessionManager {
           slideIndex: room.currentSlide,
           emoji: student.currentEmoji,
           durationMs: duration,
+          selectedAt: new Date(student.emojiSelectedAt),
         })
         .catch(console.error);
     }
@@ -1144,6 +1201,7 @@ export class SessionManager {
               slideIndex: student.slideIndex,
               emoji: student.currentEmoji,
               durationMs: duration,
+              selectedAt: new Date(student.emojiSelectedAt),
             })
             .catch(console.error),
         );

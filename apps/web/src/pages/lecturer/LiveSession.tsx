@@ -11,7 +11,7 @@ import { useStudentAnnotationReceiver } from '../../hooks/useStudentAnnotationRe
 import StudentAnnotationOverlay from '../../components/StudentAnnotationOverlay.tsx';
 import JoinQrOverlay from '../../components/JoinQrOverlay.tsx';
 import { api } from '../../lib/api.ts';
-import { useTheme } from '../../contexts/ThemeContext.tsx';
+import AccessibilityToggles from '../../components/AccessibilityToggles.tsx';
 import type { FeedbackDistribution, Question, Session, ConfusionHighlight, PaceDistribution, Poll, PollResults } from '@lecture-feedback/shared';
 
 // ── SVG icons ─────────────────────────────────────────────────────────────────
@@ -174,7 +174,6 @@ export default function LiveSession() {
   const { sessionId } = useParams<{ sessionId: string }>();
   const navigate = useNavigate();
   const token = localStorage.getItem('token')!;
-  const { resolved: theme, toggle: toggleTheme } = useTheme();
 
   const [session, setSession] = useState<Session | null>(null);
   const [elapsed, setElapsed] = useState(0);
@@ -806,22 +805,9 @@ export default function LiveSession() {
               )}
             </button>
 
-            {/* Theme toggle */}
-            <button
-              onClick={toggleTheme}
-              className="rounded-lg p-1.5 text-gray-500 dark:text-gray-400 transition hover:bg-gray-100 dark:hover:bg-gray-700 hover:text-gray-800 dark:hover:text-gray-200"
-              title={`Switch to ${theme === 'dark' ? 'light' : 'dark'} mode`}
-            >
-              {theme === 'dark' ? (
-                <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M12 3v1m0 16v1m9-9h-1M4 12H3m15.364 6.364l-.707-.707M6.343 6.343l-.707-.707m12.728 0l-.707.707M6.343 17.657l-.707.707M16 12a4 4 0 11-8 0 4 4 0 018 0z" />
-                </svg>
-              ) : (
-                <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M20.354 15.354A9 9 0 018.646 3.646 9.003 9.003 0 0012 21a9.003 9.003 0 008.354-5.646z" />
-                </svg>
-              )}
-            </button>
+            {/* Theme + Dyslexia toggles — no device-view toggle on the live
+                session page since the layout is already viewport-responsive. */}
+            <AccessibilityToggles variant="header" hideViewToggle />
 
             <button onClick={handleEnd} className="rounded-lg bg-red-700/80 px-3 py-1.5 text-xs font-semibold text-white transition hover:bg-red-600">End session</button>
           </div>
@@ -1284,7 +1270,7 @@ export default function LiveSession() {
             </div>
           ) : (
             <div className="p-5 overflow-y-auto flex-1">
-              <h3 className="mb-4 text-[11px] font-semibold uppercase tracking-widest text-gray-400 dark:text-gray-400">
+              <h3 className="mb-4 text-[11px] font-semibold uppercase tracking-widest text-gray-500 dark:text-gray-400">
                 Student understanding
               </h3>
               <FeedbackPieChart distribution={distribution} dark />
@@ -1364,7 +1350,8 @@ export default function LiveSession() {
               className="flex h-9 items-center gap-1.5 rounded-full bg-white/10 px-3 text-xs font-medium text-white transition hover:bg-white/20"
             >
               <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.2}>
-                <path strokeLinecap="round" strokeLinejoin="round" d="M9 9V5H5m0 14h4v-4m6-6h4V5m-4 14h4v-4" />
+                {/* Exit-fullscreen: four L-brackets with corners facing center, arms extending out to the viewBox edges */}
+                <path strokeLinecap="round" strokeLinejoin="round" d="M4 8H8V4 M16 4V8H20 M20 16H16V20 M8 20V16H4" />
               </svg>
               Exit
             </button>
