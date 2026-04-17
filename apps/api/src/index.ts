@@ -12,6 +12,7 @@ import { Hono } from 'hono';
 import { cors } from 'hono/cors';
 import { logger } from 'hono/logger';
 import fs from 'node:fs/promises';
+import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import authRouter from './routes/auth.js';
@@ -92,6 +93,44 @@ mountRoutes(app, '/api');  // prod: /api/auth, /api/sessions, ...
 
 app.get('/health', (c) => c.json({ ok: true }));
 app.get('/api/health', (c) => c.json({ ok: true }));
+
+// Dev-only: expose the join URLs a lecturer's QR can point at. Two are useful:
+//   - `tunnel`: current Cloudflare quick-tunnel URL (set by scripts/dev-tunnel.mjs).
+//     Works over mobile data and any Wi-Fi *unless* the phone's resolver filters
+//     trycloudflare.com (UK mobile carriers and many home ISPs do). Ephemeral.
+//   - `lan`: the laptop's own LAN IPv4s. Works when the phone is on the same
+//     Wi-Fi. No third-party DNS involved, so it's immune to tunnel-domain
+//     filtering and works offline-of-internet too.
+// The QR overlay shows both so the lecturer can pick whichever reaches the phone.
+if (!isProd) {
+  const tunnelFile = path.resolve(process.cwd(), '.tunnel-url');
+  const readTunnel = async (): Promise<string | null> => {
+    try {
+      const url = (await fs.readFile(tunnelFile, 'utf8')).trim();
+      return url || null;
+    } catch {
+      return null;
+    }
+  };
+  const getLanUrls = (port: number): string[] => {
+    const urls: string[] = [];
+    for (const [name, list] of Object.entries(os.networkInterfaces())) {
+      if (!list) continue;
+      // Skip virtual bridges that are typically not reachable from a phone.
+      if (/vEthernet|VirtualBox|VMware|Loopback|WSL|Docker/i.test(name)) continue;
+      for (const a of list) {
+        if (a.family === 'IPv4' && !a.internal) urls.push(`http://${a.address}:${port}`);
+      }
+    }
+    return urls;
+  };
+  const joinUrlsHandler = async (c: import('hono').Context) => {
+    const port = Number(c.req.query('port') ?? 5173);
+    return c.json({ tunnel: await readTunnel(), lan: getLanUrls(port) });
+  };
+  app.get('/dev/join-urls', joinUrlsHandler);
+  app.get('/api/dev/join-urls', joinUrlsHandler);
+}
 
 // ── WebSocket ─────────────────────────────────────────────────────────────────
 

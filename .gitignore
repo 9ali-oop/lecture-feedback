@@ -8,5 +8,7 @@ env.txt
 *.local
 uploads/
 .DS_Store
+# Current dev tunnel URL captured by scripts/dev-tunnel.mjs. Ephemeral.
+.tunnel-url
 # One-off generated TOTP enrolment QRs. These are secrets-equivalent.
 *-totp-qr.png

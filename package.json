@@ -3,7 +3,7 @@
   "private": true,
   "scripts": {
     "dev": "pnpm --parallel --filter './apps/*' dev",
-    "tunnel": "cloudflared tunnel --url http://localhost:5173",
+    "tunnel": "node scripts/dev-tunnel.mjs",
     "build": "pnpm -r build",
     "build:web": "pnpm --filter @lecture-feedback/web build",
     "start": "pnpm --filter @lecture-feedback/api start",
