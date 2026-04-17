@@ -37,7 +37,9 @@ async function run() {
 
   const after = await db.execute(sql`SELECT email, role FROM users ORDER BY role, email`);
   console.log(`Users after: ${after.rows.length}`);
-  for (const r of after.rows) console.log(`  ${r.role.padEnd(8)} ${r.email}`);
+  for (const r of after.rows as { role: string; email: string }[]) {
+    console.log(`  ${r.role.padEnd(8)} ${r.email}`);
+  }
   process.exit(0);
 }
 
