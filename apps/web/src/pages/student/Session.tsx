@@ -98,9 +98,15 @@ export default function StudentSession() {
     const handler = (e: KeyboardEvent) => {
       if (e.target instanceof HTMLTextAreaElement || e.target instanceof HTMLInputElement) return;
       if (e.key === 'f' || e.key === 'F') {
-        setFocusMode((v) => !v);
-        if (!focusMode) setShowPanel(false);
-        else setShowPanel(window.innerWidth >= 1024);
+        // Toggle focus mode. Entering: collapse the panel on every breakpoint
+        // so the slide gets maximum room — the always-on emoji strip covers
+        // rating needs. Exiting: restore the lg default (panel open) so
+        // desktop users don't land looking at an empty gutter.
+        setFocusMode((v) => {
+          const nextFocus = !v;
+          setShowPanel(nextFocus ? false : window.innerWidth >= 1024);
+          return nextFocus;
+        });
       }
       if (e.key === 'Escape' && focusMode) {
         setFocusMode(false);
@@ -331,6 +337,9 @@ export default function StudentSession() {
   // On iOS Safari where this is restricted, we fall back to the pure-CSS focus mode.
   async function enterFullscreen() {
     setFocusMode(true);
+    // Collapse the panel on entry: the always-on reaction strip covers
+    // rating in focus mode and the extra width gives the slide more room.
+    setShowPanel(false);
     const el = document.documentElement as HTMLElement & {
       webkitRequestFullscreen?: () => Promise<void>;
     };
@@ -346,11 +355,13 @@ export default function StudentSession() {
 
   async function exitFullscreen() {
     setFocusMode(false);
-    // Close the bottom panel. On landscape phones an open 40dvh panel + top bar
-    // + nav leaves the slide with ~80px of vertical space, which feels "stuck"
-    // because the content is technically rendered but too small to see. Closing
-    // the panel on exit gives the slide back its full height.
-    setShowPanel(false);
+    // On phones we force-close the panel — otherwise a 40dvh landscape panel
+    // + top bar + nav leaves the slide with ~80px of vertical space and the
+    // user is "stuck" (content renders, just way too small to read). Desktop
+    // doesn't have that problem, so preserve whatever panel state the user
+    // had before entering focus. Default-open matches the initial state on
+    // lg so the Q&A / pace / engagement controls are immediately reachable.
+    setShowPanel(window.innerWidth >= 1024);
     try {
       const orient = (screen as Screen & { orientation?: { unlock?: () => void } }).orientation;
       orient?.unlock?.();
@@ -369,7 +380,8 @@ export default function StudentSession() {
     const onChange = () => {
       if (!document.fullscreenElement && focusMode) {
         setFocusMode(false);
-        setShowPanel(false);
+        // Mirror exitFullscreen: preserve panel on desktop, close on mobile.
+        setShowPanel(window.innerWidth >= 1024);
       }
     };
     document.addEventListener('fullscreenchange', onChange);
@@ -794,8 +806,11 @@ export default function StudentSession() {
       )}
 
       <div className="flex flex-1 flex-col lg:flex-row overflow-hidden">
-        {/* Slides column */}
-        <div className="flex flex-1 flex-col overflow-hidden min-h-0">
+        {/* Slides column. In focus mode on lg, the reaction strip is
+            absolutely positioned at the bottom of the viewport (see below)
+            — reserve 4rem of bottom padding so the slide doesn't render
+            under it. Mobile keeps the strip in-flow so no padding needed. */}
+        <div className={`flex flex-1 flex-col overflow-hidden min-h-0 ${focusMode ? 'lg:pb-16' : ''}`}>
           {/* PDF / Whiteboard — tap-to-exit-fullscreen when in focus mode (and not annotating) */}
           <div
             className="flex-1 overflow-hidden bg-white dark:bg-gray-950 p-2 md:p-4"
@@ -820,45 +835,44 @@ export default function StudentSession() {
               </div>
             )}
             {session?.hasPdf || viewMode === 'whiteboard' ? (
-              <div className="relative w-full h-full flex items-center justify-center">
-                <PdfViewer
-                  url={api.pdfUrl(sessionId!)}
-                  currentPage={currentSlide}
-                  onTotalPages={setTotalSlides}
-                  token={token}
-                  onCanvasResize={handleCanvasResize}
-                  className="rounded-xl shadow-sm"
-                  scaleMode="contain"
-                  whiteboardMode={viewMode === 'whiteboard'}
-                  {...(annotationAccess.status === 'granted' ? {
-                    overlayRef,
-                    tool: studentTool,
-                    penColor: studentPenColor,
-                    penWidth: studentPenWidth,
-                    eraserWidth: studentEraserWidth,
-                    onDrawStart: (x: number, y: number, drawTool: DrawTool) => {
-                      if (drawTool === 'pen') annotationSync.startDrawBatch(studentPenColor, studentPenWidth);
-                      if (drawTool === 'eraser') annotationSync.startEraseBatch(studentEraserWidth);
-                    },
-                    onDrawMove: (x: number, y: number, drawTool: DrawTool) => {
-                      if (drawTool === 'pen') annotationSync.addDrawPoint(x, y);
-                      if (drawTool === 'eraser') annotationSync.addErasePoint(x, y);
-                      if (drawTool === 'laser') annotationSync.sendLaserMove(x, y);
-                      if (drawTool !== 'pointer' && drawTool !== 'text') annotationSync.sendCursorPosition(x, y, drawTool);
-                    },
-                    onDrawEnd: (drawTool: DrawTool) => {
-                      if (drawTool === 'pen') annotationSync.endDrawBatch();
-                      if (drawTool === 'eraser') annotationSync.endEraseBatch();
-                      annotationSync.sendCursorHide();
-                    },
-                    onLeave: (drawTool: DrawTool) => {
-                      if (drawTool === 'pen') annotationSync.endDrawBatch();
-                      if (drawTool === 'eraser') annotationSync.endEraseBatch();
-                      if (drawTool === 'laser') annotationSync.sendLaserEnd();
-                      annotationSync.sendCursorHide();
-                    },
-                  } : {})}
-                />
+              <PdfViewer
+                url={api.pdfUrl(sessionId!)}
+                currentPage={currentSlide}
+                onTotalPages={setTotalSlides}
+                token={token}
+                onCanvasResize={handleCanvasResize}
+                className="rounded-xl shadow-sm"
+                scaleMode="contain"
+                whiteboardMode={viewMode === 'whiteboard'}
+                {...(annotationAccess.status === 'granted' ? {
+                  overlayRef,
+                  tool: studentTool,
+                  penColor: studentPenColor,
+                  penWidth: studentPenWidth,
+                  eraserWidth: studentEraserWidth,
+                  onDrawStart: (x: number, y: number, drawTool: DrawTool) => {
+                    if (drawTool === 'pen') annotationSync.startDrawBatch(studentPenColor, studentPenWidth);
+                    if (drawTool === 'eraser') annotationSync.startEraseBatch(studentEraserWidth);
+                  },
+                  onDrawMove: (x: number, y: number, drawTool: DrawTool) => {
+                    if (drawTool === 'pen') annotationSync.addDrawPoint(x, y);
+                    if (drawTool === 'eraser') annotationSync.addErasePoint(x, y);
+                    if (drawTool === 'laser') annotationSync.sendLaserMove(x, y);
+                    if (drawTool !== 'pointer' && drawTool !== 'text') annotationSync.sendCursorPosition(x, y, drawTool);
+                  },
+                  onDrawEnd: (drawTool: DrawTool) => {
+                    if (drawTool === 'pen') annotationSync.endDrawBatch();
+                    if (drawTool === 'eraser') annotationSync.endEraseBatch();
+                    annotationSync.sendCursorHide();
+                  },
+                  onLeave: (drawTool: DrawTool) => {
+                    if (drawTool === 'pen') annotationSync.endDrawBatch();
+                    if (drawTool === 'eraser') annotationSync.endEraseBatch();
+                    if (drawTool === 'laser') annotationSync.sendLaserEnd();
+                    annotationSync.sendCursorHide();
+                  },
+                } : {})}
+              >
                 <AnnotationOverlay
                   canvasWidth={canvasSize.width}
                   canvasHeight={canvasSize.height}
@@ -922,7 +936,7 @@ export default function StudentSession() {
                     ))}
                   </div>
                 )}
-              </div>
+              </PdfViewer>
             ) : (
               <div className="flex h-full items-center justify-center text-gray-400 dark:text-gray-600">
                 No slides uploaded
@@ -956,12 +970,21 @@ export default function StudentSession() {
           </svg>
         </button>
 
-        {/* Mobile reaction strip — always visible (even in focus mode), pinned
-            in the thumb zone so students can tap without taking eyes off the
-            lecturer. Replaces the old tap-tab -> open-drawer -> find-button
-            flow with a single one-tap action. Spatial memory: buttons stay
-            in the same position so the thumb finds them blind. */}
-        <div className="lg:hidden shrink-0 flex border-t border-gray-100 dark:border-gray-800 bg-white dark:bg-gray-900">
+        {/* Reaction strip — always visible (even in focus mode), pinned in
+            the thumb zone so students can tap without taking eyes off the
+            lecturer. Spatial memory: buttons stay in the same position so
+            the thumb finds them blind.
+            On desktop the same buttons live inside the right panel instead
+            (to free horizontal space for the slide), EXCEPT in focus mode
+            where the panel is collapsed — then the strip comes back at the
+            bottom, overlaid on the slide via fixed positioning (otherwise
+            the parent `lg:flex-row` would squeeze it into a narrow column
+            between slide and panel). */}
+        <div className={`shrink-0 flex border-t border-gray-100 dark:border-gray-800 bg-white dark:bg-gray-900 ${
+          focusMode
+            ? 'lg:fixed lg:bottom-0 lg:inset-x-0 lg:z-30'
+            : 'lg:hidden'
+        }`}>
           {EMOJIS.map((e) => {
             const isSelected = selectedEmoji === e.id;
             const isFlashing = flashEmoji === e.id;
@@ -1208,18 +1231,25 @@ export default function StudentSession() {
       </div>
 
       {/* Floating exit-fullscreen button (only when in focus mode). Tap anywhere
-          on the slide area also exits — handled on the slide container below. */}
+          on the slide area also exits — handled on the slide container below.
+          Desktop-only keyboard hint sits next to it; phones don't have a
+          keyboard so we skip the hint there to avoid clutter. */}
       {focusMode && (
-        <button
-          onClick={() => exitFullscreen()}
-          className="fixed top-3 right-3 z-40 rounded-full bg-black/60 p-3 text-white shadow-lg backdrop-blur-sm transition hover:bg-black/80 active:scale-95 min-h-[44px] min-w-[44px]"
-          title="Exit fullscreen (Esc)"
-          aria-label="Exit fullscreen"
-        >
-          <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-            <path strokeLinecap="round" strokeLinejoin="round" d="M9 9V5H5m0 14h4v-4m6-6h4V5m-4 14h4v-4" />
-          </svg>
-        </button>
+        <>
+          <button
+            onClick={() => exitFullscreen()}
+            className="fixed top-3 right-3 z-40 rounded-full bg-black/60 p-3 text-white shadow-lg backdrop-blur-sm transition hover:bg-black/80 active:scale-95 min-h-[44px] min-w-[44px]"
+            title="Exit fullscreen (Esc)"
+            aria-label="Exit fullscreen"
+          >
+            <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M9 9V5H5m0 14h4v-4m6-6h4V5m-4 14h4v-4" />
+            </svg>
+          </button>
+          <div className="pointer-events-none fixed top-3 right-20 z-40 hidden lg:block rounded-full bg-black/50 px-3 py-1.5 text-[10px] tracking-wide text-white/75 backdrop-blur-sm">
+            F / Esc to exit · ← → to navigate
+          </div>
+        </>
       )}
 
       {/* Floating "Done marking" CTA — appears when the user is marking but the panel is closed */}

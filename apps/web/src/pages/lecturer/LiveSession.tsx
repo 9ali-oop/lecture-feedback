@@ -1000,146 +1000,149 @@ export default function LiveSession() {
 
         {/* Slide area */}
         <div className="flex flex-1 flex-col overflow-hidden">
-          <div className="flex flex-1 items-center justify-center overflow-hidden bg-gray-100 dark:bg-gray-950 p-6" onClick={handleSlideAreaClick}>
-            <div ref={slideAreaRef} className="relative w-full h-full">
-              {session?.hasPdf || whiteboardMode ? (
-                <PdfViewer
-                  url={api.pdfUrl(sessionId!)}
-                  currentPage={currentSlide}
-                  onTotalPages={handleTotalPages}
-                  overlayRef={overlayRef}
-                  tool={tool}
-                  penColor={penColor}
-                  penWidth={penWidth}
-                  eraserWidth={eraserWidth}
-                  token={token}
-                  whiteboardMode={whiteboardMode}
-                  onCanvasResize={handleCanvasResize}
-                  onDrawStart={(x, y, drawTool) => {
-                    if (drawTool === 'pen') annotationSync.startDrawBatch(penColor, penWidth);
-                    if (drawTool === 'eraser') annotationSync.startEraseBatch(eraserWidth);
-                  }}
-                  onDrawMove={(x, y, drawTool) => {
-                    if (drawTool === 'pen') annotationSync.addDrawPoint(x, y);
-                    if (drawTool === 'eraser') annotationSync.addErasePoint(x, y);
-                    if (drawTool === 'laser') annotationSync.sendLaserMove(x, y);
-                    if (drawTool !== 'pointer' && drawTool !== 'text') annotationSync.sendCursorPosition(x, y, drawTool);
-                  }}
-                  onDrawEnd={(drawTool) => {
-                    if (drawTool === 'pen') annotationSync.endDrawBatch();
-                    if (drawTool === 'eraser') annotationSync.endEraseBatch();
-                    annotationSync.sendCursorHide();
-                  }}
-                  onLeave={(drawTool) => {
-                    if (drawTool === 'pen') annotationSync.endDrawBatch();
-                    if (drawTool === 'eraser') annotationSync.endEraseBatch();
-                    if (drawTool === 'laser') annotationSync.sendLaserEnd();
-                    annotationSync.sendCursorHide();
-                  }}
-                  className="h-full rounded-lg overflow-hidden shadow-2xl"
+          {/* In focus mode, the floating toolbar pill + hint sit at the
+              bottom of the viewport — reserve ~6rem so the slide doesn't
+              render under them. */}
+          <div className={`flex flex-1 items-center justify-center overflow-hidden bg-gray-100 dark:bg-gray-950 p-6 ${focusMode ? 'pb-24' : ''}`}>
+            {session?.hasPdf || whiteboardMode ? (
+              <PdfViewer
+                url={api.pdfUrl(sessionId!)}
+                currentPage={currentSlide}
+                onTotalPages={handleTotalPages}
+                overlayRef={overlayRef}
+                tool={tool}
+                penColor={penColor}
+                penWidth={penWidth}
+                eraserWidth={eraserWidth}
+                token={token}
+                whiteboardMode={whiteboardMode}
+                onCanvasResize={handleCanvasResize}
+                canvasAreaRef={slideAreaRef}
+                onCanvasAreaClick={handleSlideAreaClick}
+                onDrawStart={(x, y, drawTool) => {
+                  if (drawTool === 'pen') annotationSync.startDrawBatch(penColor, penWidth);
+                  if (drawTool === 'eraser') annotationSync.startEraseBatch(eraserWidth);
+                }}
+                onDrawMove={(x, y, drawTool) => {
+                  if (drawTool === 'pen') annotationSync.addDrawPoint(x, y);
+                  if (drawTool === 'eraser') annotationSync.addErasePoint(x, y);
+                  if (drawTool === 'laser') annotationSync.sendLaserMove(x, y);
+                  if (drawTool !== 'pointer' && drawTool !== 'text') annotationSync.sendCursorPosition(x, y, drawTool);
+                }}
+                onDrawEnd={(drawTool) => {
+                  if (drawTool === 'pen') annotationSync.endDrawBatch();
+                  if (drawTool === 'eraser') annotationSync.endEraseBatch();
+                  annotationSync.sendCursorHide();
+                }}
+                onLeave={(drawTool) => {
+                  if (drawTool === 'pen') annotationSync.endDrawBatch();
+                  if (drawTool === 'eraser') annotationSync.endEraseBatch();
+                  if (drawTool === 'laser') annotationSync.sendLaserEnd();
+                  annotationSync.sendCursorHide();
+                }}
+                className="rounded-lg overflow-hidden shadow-2xl"
+              >
+                {/* Text boxes layer */}
+                {textBoxes.map((tb) => (
+                  <div key={tb.id} data-textbox>
+                    <TextBox
+                      data={tb}
+                      containerWidth={canvasSize.width}
+                      containerHeight={canvasSize.height}
+                      selected={selectedTextBoxId === tb.id}
+                      onSelect={() => setSelectedTextBoxId(tb.id)}
+                      onUpdate={(patch) => updateTextBox(tb.id, patch)}
+                      onDelete={() => deleteTextBox(tb.id)}
+                    />
+                  </div>
+                ))}
+
+                {/* Confusion areas overlay (ephemeral, toggle-able) */}
+                {showConfusion && confusionAreas.map((ca, i) => {
+                  const hl = ca.highlight;
+                  const isLost = ca.emoji === 'lost';
+                  const borderColor = isLost ? 'rgba(239, 68, 68, 0.8)' : 'rgba(234, 179, 8, 0.8)';
+                  const bgColor = isLost ? 'rgba(239, 68, 68, 0.12)' : 'rgba(234, 179, 8, 0.12)';
+                  const style: React.CSSProperties = hl.shape === 'rect'
+                    ? {
+                        position: 'absolute',
+                        left: `${hl.x * 100}%`, top: `${hl.y * 100}%`,
+                        width: `${hl.width * 100}%`, height: `${hl.height * 100}%`,
+                        border: `2px solid ${borderColor}`, background: bgColor,
+                        borderRadius: '4px', pointerEvents: 'none', zIndex: 15,
+                      }
+                    : {
+                        position: 'absolute',
+                        left: `${(hl.x - hl.width) * 100}%`, top: `${(hl.y - hl.height) * 100}%`,
+                        width: `${hl.width * 2 * 100}%`, height: `${hl.height * 2 * 100}%`,
+                        border: `2px solid ${borderColor}`, background: bgColor,
+                        borderRadius: '50%', pointerEvents: 'none', zIndex: 15,
+                      };
+                  return <div key={i} style={style} />;
+                })}
+
+                {/* Student annotation overlay */}
+                <StudentAnnotationOverlay
+                  canvasWidth={canvasSize.width}
+                  canvasHeight={canvasSize.height}
+                  incomingStroke={studentAnnotationReceiver.incomingStroke}
+                  clearTrigger={studentAnnotationReceiver.clearTrigger}
                 />
-              ) : (
-                <div className="flex h-full items-center justify-center text-gray-400 dark:text-gray-600 text-sm">
-                  No slides uploaded
-                </div>
-              )}
 
-              {/* Text boxes layer */}
-              {textBoxes.map((tb) => (
-                <div key={tb.id} data-textbox>
-                  <TextBox
-                    data={tb}
-                    containerWidth={canvasSize.width}
-                    containerHeight={canvasSize.height}
-                    selected={selectedTextBoxId === tb.id}
-                    onSelect={() => setSelectedTextBoxId(tb.id)}
-                    onUpdate={(patch) => updateTextBox(tb.id, patch)}
-                    onDelete={() => deleteTextBox(tb.id)}
-                  />
-                </div>
-              ))}
-
-              {/* Confusion areas overlay (ephemeral, toggle-able) */}
-              {showConfusion && confusionAreas.map((ca, i) => {
-                const hl = ca.highlight;
-                const isLost = ca.emoji === 'lost';
-                const borderColor = isLost ? 'rgba(239, 68, 68, 0.8)' : 'rgba(234, 179, 8, 0.8)';
-                const bgColor = isLost ? 'rgba(239, 68, 68, 0.12)' : 'rgba(234, 179, 8, 0.12)';
-                const style: React.CSSProperties = hl.shape === 'rect'
-                  ? {
-                      position: 'absolute',
-                      left: `${hl.x * 100}%`, top: `${hl.y * 100}%`,
-                      width: `${hl.width * 100}%`, height: `${hl.height * 100}%`,
-                      border: `2px solid ${borderColor}`, background: bgColor,
-                      borderRadius: '4px', pointerEvents: 'none', zIndex: 15,
-                    }
-                  : {
-                      position: 'absolute',
-                      left: `${(hl.x - hl.width) * 100}%`, top: `${(hl.y - hl.height) * 100}%`,
-                      width: `${hl.width * 2 * 100}%`, height: `${hl.height * 2 * 100}%`,
-                      border: `2px solid ${borderColor}`, background: bgColor,
-                      borderRadius: '50%', pointerEvents: 'none', zIndex: 15,
-                    };
-                return <div key={i} style={style} />;
-              })}
-
-              {/* Student annotation overlay */}
-              <StudentAnnotationOverlay
-                canvasWidth={canvasSize.width}
-                canvasHeight={canvasSize.height}
-                incomingStroke={studentAnnotationReceiver.incomingStroke}
-                clearTrigger={studentAnnotationReceiver.clearTrigger}
-              />
-
-              {/* Student laser pointer overlay */}
-              {studentLaser.visible && studentLaser.slideIndex === currentSlide && (() => {
-                const lx = studentLaser.x * canvasSize.width;
-                const ly = studentLaser.y * canvasSize.height;
-                const ringScale = studentLaser.paused ? 1 + 0.3 * Math.sin(studentLaserRingPhase) : 0;
-                return (
-                  <div
-                    className="absolute pointer-events-none"
-                    style={{
-                      left: lx - 22,
-                      top: ly - 22,
-                      width: 44,
-                      height: 44,
-                      zIndex: 25,
-                    }}
-                  >
+                {/* Student laser pointer overlay */}
+                {studentLaser.visible && studentLaser.slideIndex === currentSlide && (() => {
+                  const lx = studentLaser.x * canvasSize.width;
+                  const ly = studentLaser.y * canvasSize.height;
+                  const ringScale = studentLaser.paused ? 1 + 0.3 * Math.sin(studentLaserRingPhase) : 0;
+                  return (
                     <div
-                      className="absolute inset-0 rounded-full"
+                      className="absolute pointer-events-none"
                       style={{
-                        background: 'radial-gradient(circle, rgba(255,30,30,0.35) 0%, rgba(255,30,30,0) 70%)',
+                        left: lx - 22,
+                        top: ly - 22,
+                        width: 44,
+                        height: 44,
+                        zIndex: 25,
                       }}
-                    />
-                    <div
-                      className="absolute rounded-full"
-                      style={{
-                        left: 17,
-                        top: 17,
-                        width: 10,
-                        height: 10,
-                        background: 'rgba(255, 30, 30, 0.95)',
-                      }}
-                    />
-                    {studentLaser.paused && (
+                    >
                       <div
-                        className="absolute rounded-full border-2 border-red-400"
+                        className="absolute inset-0 rounded-full"
                         style={{
-                          left: 22 - 18 * (1 + ringScale) / 2,
-                          top: 22 - 18 * (1 + ringScale) / 2,
-                          width: 18 * (1 + ringScale),
-                          height: 18 * (1 + ringScale),
-                          opacity: 0.6 + 0.4 * Math.sin(studentLaserRingPhase),
-                          transition: 'width 0.1s, height 0.1s',
+                          background: 'radial-gradient(circle, rgba(255,30,30,0.35) 0%, rgba(255,30,30,0) 70%)',
                         }}
                       />
-                    )}
-                  </div>
-                );
-              })()}
-            </div>
+                      <div
+                        className="absolute rounded-full"
+                        style={{
+                          left: 17,
+                          top: 17,
+                          width: 10,
+                          height: 10,
+                          background: 'rgba(255, 30, 30, 0.95)',
+                        }}
+                      />
+                      {studentLaser.paused && (
+                        <div
+                          className="absolute rounded-full border-2 border-red-400"
+                          style={{
+                            left: 22 - 18 * (1 + ringScale) / 2,
+                            top: 22 - 18 * (1 + ringScale) / 2,
+                            width: 18 * (1 + ringScale),
+                            height: 18 * (1 + ringScale),
+                            opacity: 0.6 + 0.4 * Math.sin(studentLaserRingPhase),
+                            transition: 'width 0.1s, height 0.1s',
+                          }}
+                        />
+                      )}
+                    </div>
+                  );
+                })()}
+              </PdfViewer>
+            ) : (
+              <div className="flex h-full items-center justify-center text-gray-400 dark:text-gray-600 text-sm">
+                No slides uploaded
+              </div>
+            )}
           </div>
 
           {/* Navigation */}
@@ -1305,6 +1308,72 @@ export default function LiveSession() {
 
       {sessionId && (
         <JoinQrOverlay sessionId={sessionId} open={showJoinQr} onClose={() => setShowJoinQr(false)} />
+      )}
+
+      {/* Floating focus-mode toolbar.
+          Focus mode hides the top bar + drawing toolbar + navigation so the
+          slide fills the viewport — but without *some* surface to change
+          tool, draw, or exit, lecturers get stuck mid-presentation. This
+          pill gives them the essentials without restoring the full chrome. */}
+      {focusMode && (
+        <>
+          <div className="fixed bottom-4 left-1/2 z-40 -translate-x-1/2 flex items-center gap-1 rounded-full bg-gray-900/85 px-2 py-1.5 shadow-xl ring-1 ring-white/10 backdrop-blur-sm">
+            <button
+              onClick={() => setTool('pointer')}
+              title="Pointer"
+              className={`flex h-9 w-9 items-center justify-center rounded-full transition ${tool === 'pointer' ? 'bg-blue-600 text-white' : 'text-gray-300 hover:bg-white/10'}`}
+            >
+              <IconPointer />
+            </button>
+            <button
+              onClick={() => setTool('pen')}
+              title="Pen"
+              className={`flex h-9 w-9 items-center justify-center rounded-full transition ${tool === 'pen' ? 'bg-blue-600 text-white' : 'text-gray-300 hover:bg-white/10'}`}
+            >
+              <IconPen />
+            </button>
+            <button
+              onClick={() => setTool('laser')}
+              title="Laser pointer"
+              className={`flex h-9 w-9 items-center justify-center rounded-full transition ${tool === 'laser' ? 'bg-blue-600 text-white' : 'text-gray-300 hover:bg-white/10'}`}
+            >
+              <IconLaser />
+            </button>
+            <button
+              onClick={() => setTool('eraser')}
+              title="Eraser"
+              className={`flex h-9 w-9 items-center justify-center rounded-full transition ${tool === 'eraser' ? 'bg-blue-600 text-white' : 'text-gray-300 hover:bg-white/10'}`}
+            >
+              <IconEraser />
+            </button>
+            <div className="mx-1 h-5 w-px bg-white/20" />
+            <button
+              onClick={clearAnnotations}
+              title="Clear annotations"
+              className="flex h-9 w-9 items-center justify-center rounded-full text-gray-300 transition hover:bg-white/10"
+            >
+              <IconTrash />
+            </button>
+            <div className="mx-1 h-5 w-px bg-white/20" />
+            <span className="px-2 font-mono text-xs tabular-nums text-gray-400">
+              {whiteboardMode ? 'WB' : `${currentSlide + 1} / ${totalSlides || '—'}`}
+            </span>
+            <button
+              onClick={() => { setFocusMode(false); setShowPanel(true); }}
+              title="Exit focus (F or Esc)"
+              className="flex h-9 items-center gap-1.5 rounded-full bg-white/10 px-3 text-xs font-medium text-white transition hover:bg-white/20"
+            >
+              <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.2}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M9 9V5H5m0 14h4v-4m6-6h4V5m-4 14h4v-4" />
+              </svg>
+              Exit
+            </button>
+          </div>
+          {/* Subtle keyboard-shortcut hint, shown alongside the pill */}
+          <div className="pointer-events-none fixed bottom-16 left-1/2 z-40 -translate-x-1/2 rounded-full bg-black/50 px-3 py-1 text-[10px] tracking-wide text-white/70 backdrop-blur-sm">
+            F / Esc exit · ← → or Space navigate · Home / End jump
+          </div>
+        </>
       )}
     </div>
   );

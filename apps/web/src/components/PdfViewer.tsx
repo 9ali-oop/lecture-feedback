@@ -26,6 +26,18 @@ interface PdfViewerProps {
   onDrawMove?: (x: number, y: number, tool: DrawTool) => void;
   onDrawEnd?: (tool: DrawTool) => void;
   onLeave?: (tool: DrawTool) => void;
+  // Optional ref exposing the canvas-sized wrapper div. Callers use this to
+  // compute coordinates for overlays (text boxes, confusion areas) that live
+  // as children of the canvas area rather than external siblings.
+  canvasAreaRef?: React.RefObject<HTMLDivElement | null>;
+  // Click handler attached to the canvas-sized area only. Prefer this over
+  // attaching onClick to an outer container — the canvas is flex-centered so
+  // clicks in the surrounding empty space would otherwise map to the wrong
+  // coordinates.
+  onCanvasAreaClick?: (e: React.MouseEvent<HTMLDivElement>) => void;
+  // Overlays that should render on top of the rendered canvas and be aligned
+  // with it (annotation receivers, text boxes, confusion highlights).
+  children?: React.ReactNode;
 }
 
 export default function PdfViewer({
@@ -46,9 +58,17 @@ export default function PdfViewer({
   onDrawMove,
   onDrawEnd,
   onLeave,
+  canvasAreaRef,
+  onCanvasAreaClick,
+  children,
 }: PdfViewerProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
+  // Inner wrapper sized to match the rendered canvas. Overlays that need to
+  // share canvas coordinates (built-in overlay canvas, text boxes, annotation
+  // receivers passed via `children`) live inside this wrapper so absolute
+  // top-0/left-0 positioning aligns with the PDF.
+  const innerRef = useRef<HTMLDivElement>(null);
   const pdfRef = useRef<pdfjsLib.PDFDocumentProxy | null>(null);
   const renderTaskRef = useRef<pdfjsLib.RenderTask | null>(null);
   const laserDotRef = useRef<HTMLDivElement>(null);
@@ -104,12 +124,34 @@ export default function PdfViewer({
     }
   }, [overlayRef]);
 
+  // Apply the computed canvas display size to both the canvas and the
+  // canvas-sized inner wrapper. The wrapper shrinks to the canvas so that
+  // absolute-positioned overlay children (drawing overlay canvas, text boxes,
+  // annotation receivers) line up with the PDF at top-0/left-0.
+  const applyCanvasSize = useCallback((displayW: number, displayH: number) => {
+    const canvas = canvasRef.current;
+    const inner = innerRef.current;
+    if (canvas) {
+      canvas.style.width = `${displayW}px`;
+      canvas.style.height = `${displayH}px`;
+    }
+    if (inner) {
+      inner.style.width = `${displayW}px`;
+      inner.style.height = `${displayH}px`;
+    }
+  }, []);
+
   // ── Render page ─────────────────────────────────────────────────
   const renderPage = useCallback(async (pageIndex: number) => {
     const canvas = canvasRef.current;
     const container = containerRef.current;
     if (!canvas || !container) return;
 
+    // Measure the OUTER container (which always fills its parent via w-full
+    // h-full) rather than the inner canvas-sized wrapper. Measuring the inner
+    // wrapper creates a circular dependency: the wrapper sizes to the canvas,
+    // the canvas is sized to fit the wrapper, so first render collapses to
+    // the canvas' default 300×150 and stays there.
     const containerWidth = container.clientWidth || 900;
     const containerHeight = container.clientHeight || 600;
 
@@ -126,6 +168,7 @@ export default function PdfViewer({
       const ctx = canvas.getContext('2d')!;
       ctx.fillStyle = '#ffffff';
       ctx.fillRect(0, 0, w, h);
+      applyCanvasSize(w, h);
       saveAndResizeOverlay(w, h);
       onCanvasResizeRef.current?.(w, h);
       return;
@@ -157,15 +200,14 @@ export default function PdfViewer({
 
     canvas.width = pixelW;           // canvas intrinsic resolution (high)
     canvas.height = pixelH;
-    canvas.style.width = `${displayW}px`;  // CSS size (display)
-    canvas.style.height = `${displayH}px`;
+    applyCanvasSize(displayW, displayH);
     saveAndResizeOverlay(displayW, displayH);
     onCanvasResizeRef.current?.(displayW, displayH);
 
     renderTaskRef.current?.cancel();
     renderTaskRef.current = page.render({ canvasContext: canvas.getContext('2d')!, viewport: sv });
     try { await renderTaskRef.current.promise; } catch { /* cancelled */ }
-  }, [overlayRef, whiteboardMode, scaleMode, saveAndResizeOverlay]);
+  }, [overlayRef, whiteboardMode, scaleMode, saveAndResizeOverlay, applyCanvasSize]);
 
   useEffect(() => {
     if (whiteboardMode) {
@@ -333,51 +375,74 @@ export default function PdfViewer({
     );
   }
 
+  // Outer container fills its parent (w-full h-full) so we have a stable
+  // reference to measure against. Inner wrapper is canvas-sized and flex-
+  // centered within the outer; all overlays live inside the inner wrapper so
+  // they share the canvas' coordinate origin. `className` is applied to the
+  // inner wrapper (the visible slide card) so shadow/radius/etc. decorate the
+  // slide itself rather than the empty area around it.
   return (
-    <div ref={containerRef} className={`relative slide-canvas ${className}`}>
+    <div
+      ref={containerRef}
+      className="relative flex h-full w-full items-center justify-center"
+    >
       {loading && !whiteboardMode && (
         <div className="absolute inset-0 flex items-center justify-center bg-gray-900">
           <div className="h-8 w-8 animate-spin rounded-full border-4 border-blue-500 border-t-transparent" />
         </div>
       )}
-      <canvas ref={canvasRef} className="block" />
-      {overlayRef && (
-        <canvas
-          ref={overlayRef as React.RefObject<HTMLCanvasElement>}
-          className="absolute top-0 left-0"
-          // `touchAction: none` disables the browser's scroll/zoom gesture
-          // handling on this canvas so finger drags reach our pointer
-          // handlers (otherwise phones treat a swipe as a page pan).
-          style={{ cursor, touchAction: 'none' }}
-          onPointerDown={onPointerDown}
-          onPointerMove={onPointerMove}
-          onPointerUp={onPointerUp}
-          onPointerLeave={onPointerLeave}
-          onPointerCancel={onPointerCancel}
-        />
-      )}
-      {/* Laser dot rendered as DOM element to avoid clearing the annotation canvas */}
       <div
-        ref={laserDotRef}
-        className="pointer-events-none absolute"
-        style={{ display: 'none', width: 44, height: 44, zIndex: 20 }}
+        ref={(el) => {
+          // Cast to mutable so we can forward the same node to the caller-
+          // supplied ref. React's RefObject type is readonly by default.
+          (innerRef as React.MutableRefObject<HTMLDivElement | null>).current = el;
+          if (canvasAreaRef) {
+            (canvasAreaRef as React.MutableRefObject<HTMLDivElement | null>).current = el;
+          }
+        }}
+        className={`relative slide-canvas ${className}`}
+        onClick={onCanvasAreaClick}
       >
+        <canvas ref={canvasRef} className="block" />
+        {overlayRef && (
+          <canvas
+            ref={overlayRef as React.RefObject<HTMLCanvasElement>}
+            className="absolute top-0 left-0"
+            // `touchAction: none` disables the browser's scroll/zoom gesture
+            // handling on this canvas so finger drags reach our pointer
+            // handlers (otherwise phones treat a swipe as a page pan).
+            style={{ cursor, touchAction: 'none' }}
+            onPointerDown={onPointerDown}
+            onPointerMove={onPointerMove}
+            onPointerUp={onPointerUp}
+            onPointerLeave={onPointerLeave}
+            onPointerCancel={onPointerCancel}
+          />
+        )}
+        {/* Laser dot rendered as DOM element to avoid clearing the annotation canvas */}
         <div
-          className="absolute inset-0 rounded-full"
-          style={{
-            background: 'radial-gradient(circle, rgba(255,30,30,0.35) 0%, rgba(255,30,30,0) 70%)',
-          }}
-        />
-        <div
-          className="absolute rounded-full"
-          style={{
-            left: 17,
-            top: 17,
-            width: 10,
-            height: 10,
-            background: 'rgba(255, 30, 30, 0.95)',
-          }}
-        />
+          ref={laserDotRef}
+          className="pointer-events-none absolute"
+          style={{ display: 'none', width: 44, height: 44, zIndex: 20 }}
+        >
+          <div
+            className="absolute inset-0 rounded-full"
+            style={{
+              background: 'radial-gradient(circle, rgba(255,30,30,0.35) 0%, rgba(255,30,30,0) 70%)',
+            }}
+          />
+          <div
+            className="absolute rounded-full"
+            style={{
+              left: 17,
+              top: 17,
+              width: 10,
+              height: 10,
+              background: 'rgba(255, 30, 30, 0.95)',
+            }}
+          />
+        </div>
+        {children}
       </div>
     </div>
   );
