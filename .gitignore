@@ -15,7 +15,9 @@ dist
 /*.png
 mobile-audit/
 # Dev-log screenshot archive (visual changelog captured during iteration).
-screenshots/
+# Scoped to repo root — the usability-study report figures under
+# report/usability-study/results/screenshots/ are tracked.
+/screenshots/
 # Local temp artefacts from mobile/landscape testing scripts.
 tmp/
 # External research PDFs collected for the lit review — cited via refs.bib
