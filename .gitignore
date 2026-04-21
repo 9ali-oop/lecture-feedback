@@ -3,10 +3,7 @@ dist
 # Build / runtime artefacts
 .env
 .vite/
-# Tooling local state (editor, MCP, browser automation, CI)
-.claude/
-.mcp.json
-.playwright-mcp/
+# Local tool state
 .lighthouse/
 *.local.json
 # Debug / one-off development screenshots at repo root — all of them.
@@ -20,10 +17,13 @@ mobile-audit/
 /screenshots/
 # Local temp artefacts from mobile/landscape testing scripts.
 tmp/
-# External research PDFs collected for the lit review — cited via refs.bib
+# External research PDFs collected for the lit review - cited via refs.bib
 # rather than committed as blobs, to keep the repo lean and avoid shipping
 # copyrighted publisher material.
 research/papers/
+report/papers/
+# Prior iteration kickoff briefs, not part of the compile chain.
+report/drafts/
 # External tooling / projector installer bundled with the study venue
 report/usability-study/AirMedia_*.exe
 # External EPA briefing slides (not own work)
