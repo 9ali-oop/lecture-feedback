@@ -35,10 +35,9 @@ TMPDIR=$(mktemp -d)
 trap 'rm -rf "$TMPDIR"' EXIT
 
 REMOTE_URL="https://git:${OVERLEAF_TOKEN}@git.overleaf.com/${OVERLEAF_PROJECT_ID}"
-SCRUB="sed s|${OVERLEAF_TOKEN}|***|g"
 
 echo "[sync] cloning overleaf..."
-git clone --quiet "$REMOTE_URL" "$TMPDIR/ov" 2>&1 | eval "$SCRUB"
+git clone --quiet "$REMOTE_URL" "$TMPDIR/ov" 2>&1 | sed "s|${OVERLEAF_TOKEN}|***|g"
 
 echo "[sync] mirroring local report/ over tracked files..."
 cd "$TMPDIR/ov"
@@ -60,6 +59,6 @@ git diff --cached --stat | sed 's/^/  /'
 
 git commit -m "$MSG"
 echo "[sync] pushing..."
-git push origin master 2>&1 | eval "$SCRUB"
+git push origin master 2>&1 | sed "s|${OVERLEAF_TOKEN}|***|g"
 
 echo "[sync] done."
