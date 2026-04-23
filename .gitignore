@@ -63,3 +63,11 @@ report/usability-study/results/audio/
 # time only; must never be committed. Consent form guarantees names are not
 # linked to data in any surviving file.
 report/usability-study/results/.name-mapping.private.json
+# Voice-note pipeline: raw audio and transcripts are private and local-only.
+voice-notes/*.m4a
+voice-notes/*.mp3
+voice-notes/*.wav
+voice-notes/*.aac
+voice-notes/transcripts/
+# Review scratchpads: action-item lists derived from private conversations.
+report/.review/
