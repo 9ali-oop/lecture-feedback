@@ -62,6 +62,11 @@ router.post('/:sessionId/enroll', requireAuth('student'), async (c) => {
   return c.json({ ok: true, sessionId: session.id });
 });
 
+// Anonymous guest join is gated behind STUDY_MODE=true. Production runs with
+// TOTP-only auth (per NFR4); the guest path was used for the usability study
+// and stays available behind a flag for future studies or live demos. Without
+// the flag, this returns 404 — the route is invisible to a scanner.
+//
 // 10 guest creations per IP per minute is enough for a shared classroom
 // router (NATed phones) but blocks scripted spam. Real participants only
 // join once per session.
@@ -70,6 +75,10 @@ router.post(
   rateLimit(10, 60_000),
   zValidator('json', z.object({ name: z.string().trim().min(1).max(60).optional() }).optional()),
   async (c) => {
+    if (process.env.STUDY_MODE !== 'true') {
+      return c.json({ error: 'Session not found' }, 404);
+    }
+
     const { sessionId } = c.req.param();
     const body = c.req.valid('json') as { name?: string } | undefined;
 
