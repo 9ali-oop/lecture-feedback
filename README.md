@@ -14,7 +14,7 @@ There are three user roles: **admin**, **lecturer**, and **student**.
 - **Slide annotations** - lecturers can draw on slides live (pen, eraser, laser pointer), and students see it in real time. Students can also request annotation access.
 - **Post-lecture reflections** - after a session ends, students can jot down what they found most important and what's still unclear.
 - **Per-slide notes** - students can take personal notes on each slide during the lecture.
-- **Session reports** - both lecturers and students get a post-session breakdown with per-slide feedback, timing data, questions asked, and poll results. Lecturers also get AI-generated recommendations.
+- **Session reports** - both lecturers and students get a post-session breakdown with per-slide feedback, timing data, questions asked, and poll results. Lecturers also get algorithmic recommendations from a heuristic engine that fuses the live signals.
 - **Admin panel** - user management, TOTP provisioning, and impersonation for debugging.
 
 ## Tech stack

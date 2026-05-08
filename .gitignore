@@ -17,6 +17,8 @@ mobile-audit/
 /screenshots/
 # Local temp artefacts from mobile/landscape testing scripts.
 tmp/
+# Local diagram-rendering jars (PlantUML etc) — re-fetchable, kept out of repo.
+tools/
 # External research PDFs collected for the lit review - cited via refs.bib
 # rather than committed as blobs, to keep the repo lean and avoid shipping
 # copyrighted publisher material.

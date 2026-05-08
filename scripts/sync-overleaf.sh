@@ -48,6 +48,29 @@ while IFS= read -r f; do
   fi
 done < <(git ls-files)
 
+# Also copy any LOCAL files Overleaf doesn't know about yet (new figures,
+# new chapters, new bib entries the asset side, etc.). Excludes drafts/
+# (gitignored), feedback/ (audio + transcripts kept local), papers/
+# (external materials linked separately), and LaTeX intermediates.
+echo "[sync] checking for new local files to add..."
+(cd "$ROOT/report" && find . -type f \
+  ! -path "./drafts/*" \
+  ! -path "./feedback/*" \
+  ! -path "./papers/*" \
+  ! -path "./.review/*" \
+  ! -name "finalReport-all.txt" \
+  ! -name "finalReport-body.txt" \
+  ! -name "the flow.txt" \
+  ! -name "scan of chapter 2.txt" \
+  ! -name "*.aux" ! -name "*.log" ! -name "*.bbl" ! -name "*.blg" \
+  ! -name "*.toc" ! -name "*.out" ! -name "*.fls" ! -name "*.fdb_latexmk" \
+  ! -name "~\$*") | while IFS= read -r f; do
+  if [ ! -e "$TMPDIR/ov/$f" ]; then
+    mkdir -p "$TMPDIR/ov/$(dirname "$f")"
+    cp "$ROOT/report/$f" "$TMPDIR/ov/$f"
+  fi
+done
+
 git add -A
 if git diff --cached --quiet; then
   echo "[sync] no changes. overleaf is already up to date."
